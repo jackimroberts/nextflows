@@ -1,0 +1,193 @@
+---
+title: "initial scRNA-seq analysis, initial QC"
+author: "Jacqueline Roberts, PhD"
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+output: html_document
+params:
+ args: ''	
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE,
+                      cache = TRUE, cache.lazy = FALSE)
+
+if (!require("pacman")) install.packages("pacman")
+#if (!require("SeuratWrappers")) remotes::install_github('satijalab/seurat-wrappers')
+#if (!require("velocyto.R")) remotes::install_github("velocyto-team/velocyto.R")
+#if (!require("hdf5r")) install.packages("hdf5r", configure.args="--with-hdf5=/usr/bin/h5cc")
+#if (!require("presto")) devtools::install_github('immunogenomics/presto')
+
+pacman::p_load(Seurat,sctransform,dplyr,tidyr,ggplot2,cowplot,qs,
+	tidyverse,stringr,velocyto.R,SeuratWrappers,glmGamPoi)
+
+set.seed(1234)
+options(future.globals.maxSize=16777216000000)
+
+#read in nextflow channel inputs
+cellranger_filepath <- params$args[1]
+
+#create directories for output
+dir.create("seurat_results")
+```
+
+```{r create_seurat_objects}
+#split paths from nextflow channel to paths
+file_paths<-strsplit(gsub('\\[|\\]','',cellranger_filepath[1]),split=", ")[[1]]
+
+#set up to create seurat objects, filter, and compile into list
+mito_cutoff <- 5
+seurat_objects<-list()
+for (path in file_paths){
+	#get sample name from path
+	sample_name <- sub(".*/","",path)
+	print(sample_name)
+	
+	#generate object and filter
+	obj <- Read10X_h5(paste0(path,"/outs/filtered_feature_bc_matrix.h5"))
+	obj <- CreateSeuratObject(counts = obj, project = eval(sample_name),min.cells = 10, min.features = 200)
+  	obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^mt-")
+  	obj[["sex"]] <- PercentageFeatureSet(obj, pattern = c("^Xist|^Tsix"))
+  	d <- density(obj$nFeature_RNA)
+  	feat_min <- optimize(approxfun(d$x,d$y),interval=c(200,4000))$minimum
+  	p<-VlnPlot(obj, features = c("nFeature_RNA"), pt.size=0)+geom_hline(yintercept =feat_min)+NoLegend()
+  	q<-VlnPlot(obj, features = c("nCount_RNA"), pt.size=0)+NoLegend()
+  	r<-VlnPlot(obj, features = c("percent.mt"), pt.size=0)+geom_hline(yintercept =mito_cutoff)+NoLegend()
+  	print(plot_grid(p,q,r,ncol=3))
+  	print(FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "percent.mt")+geom_hline(yintercept =mito_cutoff)+NoLegend())
+  	print(FeatureScatter(obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")+geom_hline(yintercept =feat_min)+NoLegend())
+
+  	obj
+	seurat_objects[sample_name[1]] <- subset(obj, subset = percent.mt < mito_cutoff & nFeature_RNA > feat_min)
+	print(seurat_objects[sample_name[1]])
+}
+```
+
+```{r clustering}
+exp <- seurat_objects[[1]]
+if(length(seurat_objects)>1){
+	for (i in 2:length(seurat_objects)){
+		exp<-merge(exp,seurat_objects[[i]])
+	}
+}
+
+exp <- exp %>% 
+  SCTransform(verbose = FALSE) %>% 
+  RunPCA() %>%
+  FindNeighbors(dims = 1:30) %>% 
+  RunUMAP(dims = 1:30) %>% 
+  FindClusters(verbose = FALSE)
+
+s.genes <- str_to_title(cc.genes$s.genes)
+g2m.genes <- str_to_title(cc.genes$g2m.genes)
+
+exp <- CellCycleScoring(exp, s.features = s.genes, g2m.features = g2m.genes)
+
+qsave(exp,"seurat_results/scRNAseq.qs")
+
+clust_mark<-exp %>% PrepSCTFindMarkers() %>% FindAllMarkers(only.pos = TRUE)
+write_tsv(clust_mark,"seurat_results/cluster_markers.txt")
+
+Idents(exp) <- exp$orig.ident
+sam_mark<-exp %>% PrepSCTFindMarkers() %>% FindAllMarkers(only.pos = TRUE)
+write_tsv(sam_mark,"seurat_results/sample_markers.txt")
+
+```
+
+These plots are used to detect any anomalies in the data that are driving clustering.
+
+```{r initialplots}
+DimPlot(exp)
+DimPlot(exp,group.by = "orig.ident")
+DimPlot(exp,split.by = "orig.ident")
+
+DimPlot(exp,group.by = c("orig.ident","Phase"))
+FeaturePlot(exp, features = c("S.Score", "G2M.Score"), pt.size = 0.2)
+FeaturePlot(exp, features = c("percent.mt"), pt.size = 0.2)
+FeaturePlot(exp, features = c("nFeature_RNA", "nCount_RNA"), pt.size = 0.2)
+
+```
+
+And here are plots of the top genes to get a sense of the data
+
+```{r markerplots}
+#top 10 variable features
+goi<-VariableFeatures(exp)[1:10]
+#top 5 genes from each sample not in goi
+goi <- c(goi,
+         (sam_mark %>% 
+            filter(!gene %in% goi) %>% 
+            group_by(cluster) %>% 
+            slice_head(n=5))
+         $gene
+         )
+#top gene from each cluster not in goi
+goi <- unique(c(goi,
+                (clust_mark %>% 
+                   filter(!gene %in% goi) %>% 
+                   group_by(cluster) %>% 
+                   slice_head(n=1))
+                $gene
+                )
+              )
+
+l<-length(goi)
+
+for (i in seq(1,l,4)){
+  print(FeaturePlot(exp,goi[i:(i+3)]))
+}
+```
+
+#```{r create_velocity_objects}
+#pull velocyto data, filter cells, plot
+velo_objects<-list()
+for (path in file_paths){
+	#get sample name from path
+	sample_name <- sub(".*/","",path)
+	print(sample_name)
+	
+	#generate object and filter
+	vel <- ReadVelocity(paste0(path,"/velocyto/",eval(sample_name),".loom"))
+	for(i in 1:length(vel)){
+		rownames(vel[[i]])<-make.unique(rownames(vel[[i]]))
+		colnames(vel[[i]])<-sub(".*:","",sub("x","-1",colnames(vel[[i]])))
+	}
+	vel <- as.Seurat(vel,project = eval(sample_name))
+	vel
+	velo_objects[sample_name[1]] <- vel[,colnames(seurat_objects[sample_name[1]])]
+	velo_objects[sample_name[1]]
+}
+
+exp <- velo_objects[[1]]
+if(length(velo_objects)>1){
+	for (i in 2:length(velo_objects)){
+		exp<-merge(exp,velo_objects[[i]])
+	}
+}
+
+DefaultAssay(exp) <- "spliced"
+exp <- exp %>% 
+  SCTransform(verbose = FALSE) %>% 
+  RunPCA() %>%
+  FindNeighbors(dims = 1:30) %>% 
+  RunUMAP(dims = 1:30)
+
+exp <- RunVelocity(object = exp, deltaT = 1, kCells = 25, fit.quantile = 0.02) 
+Idents(exp)<-exp$orig.ident
+
+qsave(exp,"seurat_results/velocity.qs")
+
+names(x = ident.colors) <- levels(x = exp)
+cell.colors <- ident.colors[Idents(object = exp)]
+names(x = cell.colors) <- colnames(x = exp)
+show.velocity.on.embedding.cor(emb = Embeddings(object = exp, reduction = "umap"), 
+                               vel = Tool(object = exp, slot = "RunVelocity"), n = 200, 
+                               scale = "sqrt", cell.colors = ac(x = cell.colors, alpha = 0.5), 
+                               cex = 0.8, arrow.scale = 3, show.grid.flow = TRUE, 
+                               min.grid.cell.mass = 0.5, grid.n = 40, arrow.lwd = 1, 
+                               do.par = FALSE, cell.border.alpha = 0.1)
+#```
+
+```{r end}
+sessionInfo()
+```

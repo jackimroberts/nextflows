@@ -1,0 +1,24 @@
+#!/bin/bash
+
+BLACK=$HCI/data/Mouse/Mm10/mm10.blacklist.bed
+NCPU=`nproc`
+
+module use /uufs/chpc.utah.edu/common/home/hcibcore/Modules/modulefiles
+
+module load multirepchipseq parallel
+
+multirep_macs2_pipeline.pl \
+#details_here
+--nodedup \
+--independent \
+--maxdepth 10000 \
+--optdist 2500 \
+--genome 2500000000 \
+--cutoff 2 \
+--pe \
+--mapq 10 \
+--peaksize 150 \
+--peakgap 75 \
+--chrskip 'chrM' \
+--blacklist $BLACK \
+--cpu $NCPU
