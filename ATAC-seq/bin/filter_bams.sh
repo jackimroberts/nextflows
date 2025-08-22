@@ -1,14 +1,8 @@
 #!/bin/bash
 
-sample_name=$2
+sample=$2
 filepath=$1
-filename=${filepath##*/}
-sample=${filename%.raw*}
-
-CHR=/uufs/chpc.utah.edu/common/home/hcibcore/atlatl/data/Mouse/Mm10/mm10.standard.sizes
-#BLACK=/scratch/general/vast/mm39/mm39.blacklist.bed
-BLACK=/uufs/chpc.utah.edu/common/home/hcibcore/atlatl/data/Mouse/Mm10/mm10.blacklist.bed
-PICARD=/uufs/chpc.utah.edu/common/home/hcibcore/atlatl/app/picard/2.26.3/picard.jar
+blacklist=$3
 
 module load samtools
 module load bedtools
@@ -17,27 +11,42 @@ echo "=== filter bams for duplicate, unaligned, secondary, mitochondrial or blac
 which samtools
 which bedtools
 
-samtools sort -m 4G $filepath -o $sample.sorted.bam
+# Sort BAM file by name for fixmate
+samtools sort -n -@ $(nproc) -m 4G $filepath -o $filepath.tmp
 
-#mark and remove duplicates
-java -jar $PICARD MarkDuplicates \
-  -I $sample.sorted.bam -O $sample.dedup.bam -M $sample.dup_metrics.txt \
-  --OPTICAL_DUPLICATE_PIXEL_DISTANCE 2500 \
-  --TAGGING_POLICY All \
-  --REMOVE_DUPLICATES \
-  --VERBOSITY WARNING
+# Run fixmate to fill in mate coordinates and insert size fields
+samtools fixmate -m $filepath.tmp $filepath.fixmate.bam
 
-# filter out any duplicate, unaligned, secondary alignments
-#I've chosen to leave reads without mates because it's atac-seq
-#Normally it would be -F 3340
-samtools view -F 3332 $sample.dedup.bam -o $sample.filt.bam
+# Sort by coordinate for markdup
+samtools sort -@ $(nproc) -m 4G $filepath.fixmate.bam -o $filepath.sorted.bam
 
-#remove mitochondrial reads
-samtools index $sample.filt.bam
-cat $CHR | cut -f 1 | grep -v M | xargs samtools view -b $sample.filt.bam > $sample.tmp
+# Mark duplicates including optical duplicates using samtools
+samtools markdup -d 2500 -@ $(nproc) $filepath.sorted.bam $filepath.dedup.bam
 
-#remove blacklisted regions
-bedtools intersect -v -abam $sample.tmp -b $BLACK > $sample.filtered.bam
+# Index the deduplicated BAM file for idxstats
+samtools index $filepath.dedup.bam
 
-#calculate 
-echo $(samtools view -f 64 -c $sample.filtered.bam) | tr -d '\n'
+# Get non-mitochondrial chromosome list
+CHROMS=$(samtools idxstats $filepath.dedup.bam | cut -f 1 | grep -v -E '(MT|chrM|chrMT)' | tr '\n' ' ')
+
+# Filter out duplicates, unaligned, secondary alignments, and chrM in one step
+samtools view -@ $(nproc) -b -F 3332 $filepath.dedup.bam $CHROMS > $filepath.filt.bam
+
+# Index intermediate file
+samtools index $filepath.filt.bam
+
+# Remove blacklist regions if provided
+if [ -f "$blacklist" ]; then
+	bedtools intersect -v -abam $filepath.filt.bam -b $blacklist > $filepath.filtered.bam
+else
+    cp $filepath.filt.bam $filepath.filtered.bam
+fi
+
+# Index final filtered BAM
+samtools index $filepath.filtered.bam
+
+# Clean up intermediate files
+rm -f $filepath.tmp $filepath.fixmate.bam $filepath.sorted.bam
+
+# Calculate size for eventual scaling
+echo $(samtools view -f 64 -c $filepath.filtered.bam) | tr -d '\n'

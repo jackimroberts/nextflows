@@ -2,7 +2,7 @@
 
 params.expected_cell_number = 10000
 params.fastq_source = true
-//params.fastq_source = "java -jar ./fdtCommandLine.jar -noupdates -pull -r -c hci-bio-app.hci.utah.edu -d ./ /scratch/fdtswap/fdt_sandbox_gnomex/96ab7c97-8c77-4676-98d8-a43c3bcbf5e7/24250R"
+//params.fastq_source = "empty"
 params.sample_table = "*txt"
 
 params.help = false
@@ -48,7 +48,7 @@ workflow {
 			| flatten 
 			| set {fastq_list}
 	}
-	else {Channel.fromPath("*R/**fastq.gz") 
+	else {Channel.fromPath("**fastq.gz") 
 		| set {fastq_list}
 	}
 
@@ -134,7 +134,6 @@ process make_mini {
  */
 process run_cellranger {
 	//publishDir 'output', pattern: '**html', mode: 'copy', overwrite: true
-	maxForks 1
 	input:
 		tuple val(sample_id), val(sample_name), path(fastqs)
 	output:
@@ -154,6 +153,7 @@ process run_cellranger {
 
 		#change id to name from here
 		mv ${sample_id} ${sample_name}
+		rm -r ${sample_id}_fastqs
 		"""
 }
 /*
@@ -176,9 +176,18 @@ process run_velocyto {
 	script:
 		"""
 		module load velocyto
-		module load samtools/1.16
+		module load samtools
+		
+		which velocyto
+		which samtools
+	
+		if ! test -f ${launchDir}/work/genes.gtf; then
+			cp ${params.cellRanger_transcriptome}/genes/genes.gtf.gz ${launchDir}/work
+			gunzip ${launchDir}/work/genes.gtf.gz
+		fi
+
 		if ! test -f $cellRanger_out/velocyto/*loom; then
-  			velocyto run10x $cellRanger_out ${params.cellRanger_genes}
+  			velocyto run10x -@ `nproc` $cellRanger_out ${launchDir}/work/genes.gtf
 		fi
 		"""
 }

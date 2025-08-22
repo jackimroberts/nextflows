@@ -1,12 +1,12 @@
 #!/usr/bin/env nextflow
 
 params.mini = true
-params.fastq_source = "java -jar ./fdtCommandLine.jar -noupdates -pull -r -c hci-bio-app.hci.utah.edu -d ./ /scratch/fdtswap/fdt_sandbox_gnomex/f7f4b3f8-11de-444e-9d48-65e937c34f18/23987R"
-params.sample_table = "Vetter, Monica Lab_20242024-07-03.txt"
+params.fastq_source = "empty"
+params.sample_table = "*.txt"
 
 /*
  * Things I'd like to add:
- ** Ability to look for existing fastq or get SRA files
+ ** Ability to get SRA files
  ** change publishDir based on sample names
  ** add sample names and conditions
  ** tidy up all scripts with headers
@@ -25,6 +25,7 @@ if (params.help) {
 		Must be in this folder. Table from gnomex
 
 	--fastq_source "java -jar ./fdt....gnomex..."
+		Currently broken
 		Pulls fastq files from gnomex
 		get this command from:
 		gnomex > navigate to experiment > "Files" > "Download Files" > 
@@ -36,9 +37,7 @@ if (params.help) {
         exit 0
     }
 
-//params.fastq_source = "empty"
 input_fastq_source = Channel.value(params.fastq_source)
-//params.sample_table = "empty"
 input_sample_details = Channel.fromPath(params.sample_table)
 
 workflow {
@@ -52,7 +51,10 @@ workflow {
 	// get fastq files organized
 	//input_fastq_source 
 	//	| get_fastq
-	Channel.fromPath("*R/F*/*gz")
+	// broken. will run concurrently with next step. Requires piping together, conditonal statement or completed signal
+
+	Channel.fromPath("**fastq.gz")
+		| filter { !it.toString().contains('/work/') }
 		| flatten 
 		| set {fastq_list}
 	
@@ -196,7 +198,7 @@ process bowtie_align {
 		tuple val(sample_num), path('*raw.bam')
 	script:
 		"""
-		sh ${projectDir}/bin/bowtie_align.sh $fastqs $sample_num
+		sh ${projectDir}/bin/bowtie_align.sh $fastqs $sample_num ${params.genome_index}
 		"""
 }
 
@@ -211,7 +213,7 @@ process filter_bams {
 		tuple val(sample_num), path('*filtered.bam'), stdout
 	script:
 		"""
-		sh ${projectDir}/bin/filter_bams.sh $bam $sample_num
+		sh ${projectDir}/bin/filter_bams.sh $bam $sample_num ${params.genome_blacklist}
 		"""
 }
 
