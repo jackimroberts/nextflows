@@ -9,14 +9,16 @@ bam=$2
 depth=$3
 min_depth=$4
 
-# define application directories
-HCI=/uufs/chpc.utah.edu/common/home/hcibcore/atlatl
-SAM=$HCI/app/samtools/1.17/samtools
+# load required modules
+module load samtools
 module load deeptools
 
 # create scale based on depth and minimum depth of all samples
 scale=$(echo "scale=5; $min_depth/$depth" | bc)
 
 # index bam and generate bigwig
-$SAM index $bam
+echo "=== generate bigwig from bam, scaled to smallest bam in group"
+which samtools
+which deeptools
+samtools index $bam
 bamCoverage -b $bam --scaleFactor $scale -o $sample_num.bw

@@ -7,8 +7,10 @@ cell_number=$4
 
 module load cellranger
 
+echo "=== run cellranger count"
+which cellranger
 
-/uufs/chpc.utah.edu/common/home/hcibcore/atlatl/app/10X/cellranger-8.0.1/cellranger count --id=$sample_name \
+cellranger count --id=$sample_name \
 	--fastqs=$fastqs \
 	--transcriptome=$transcriptome \
 	--expect-cells=$cell_number \

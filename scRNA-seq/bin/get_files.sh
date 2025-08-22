@@ -2,6 +2,8 @@
 #converts gnomex provided command to utah chpc script
 #downloads fastq files
 
+echo "=== download fastq files from GNomEx, using FDT command line"
+
 #location of fdt app
 FDT="java -jar /uufs/chpc.utah.edu/sys/pkg/fdt/0.9.20/fdt.jar"
 
