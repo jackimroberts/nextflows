@@ -40,17 +40,16 @@ workflow {
 		| splitCsv( sep:"\t") 
 		| set {sample_sheet}
 
-	// get fastq files either from launch folder (default)
-	// or from gnomex via fdt
-	if(params.fastq_source != true){
-		Channel.value(params.fastq_source) 
-			| get_fastq
-			| flatten 
-			| set {fastq_list}
-	}
-	else {Channel.fromPath("**fastq.gz") 
-		| set {fastq_list}
-	}
+	// Download fastq files
+	//input_fastq_source 
+  	Channel.value(params.fastq_source) //default = true
+      		| get_fastq // download if command is give
+
+	// Get fastq files organized
+      	get_fastq.out.done
+      		| flatMap { Channel.fromPath("$launchDir/**/*fastq.gz") } // find all fastqs
+      		| filter { !it.toString().contains('/work/') } // exclude those in 'work'
+      		| set {fastq_list}
 
 	// pair up fastq files by sample id
 	// replace sample id with name
@@ -105,10 +104,13 @@ process make_sample_table {
  * Pull fastq files
  */
 process get_fastq {
+	publishDir "$launchDir/fastqs", mode: 'copy', pattern: "**"
+	
 	input:
 		val input_file_source
 	output:
-		path "**fastq.gz"
+		path "**", emit: files
+		val true, emit: done
 	script:
 		"""
 		sh ${projectDir}/bin/get_files.sh "${input_file_source}"

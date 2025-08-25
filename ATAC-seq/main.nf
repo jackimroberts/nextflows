@@ -1,17 +1,17 @@
 #!/usr/bin/env nextflow
 
-params.mini = true
-params.fastq_source = "empty"
+params.mini = false
+params.fastq_source = true
 params.sample_table = "*.txt"
 
 /*
  * Things I'd like to add:
- ** Ability to get SRA files
+ ** Ability to get SRA, ucsf files
+ ** ora decompress
  ** change publishDir based on sample names
  ** add sample names and conditions
  ** tidy up all scripts with headers
  ** qc throughout
- ** upload to github
  ** create container
  ** deploy on cloud
 */
@@ -24,8 +24,7 @@ if (params.help) {
 	--sample_table *txt
 		Must be in this folder. Table from gnomex
 
-	--fastq_source "java -jar ./fdt....gnomex..."
-		Currently broken
+	--fastq_source="java -jar ./fdt....gnomex..."
 		Pulls fastq files from gnomex
 		get this command from:
 		gnomex > navigate to experiment > "Files" > "Download Files" > 
@@ -48,30 +47,18 @@ workflow {
 		| splitCsv(header:['sample_id','sample_name','condition'], sep:"\t") 
 		| set {sample_sheet}
 
-	// get fastq files organized
+	// Download fastq files
 	//input_fastq_source 
-	//	| get_fastq
-	// broken. will run concurrently with next step. Requires piping together, conditonal statement or completed signal
-
-	Channel.fromPath("**fastq.gz")
-		| filter { !it.toString().contains('/work/') }
-		| flatten 
-		| set {fastq_list}
-	
-	// make fastq and sample sheet 'mini' if specified
- 	if (params.mini) { // helpful for testing the pipeline quickly
-		// adjust sample names for clarity
-		sample_sheet
-			| map{ row -> 
-				["mini.${row.sample_id}","mini.${row.sample_name}",row.condition] 
-			  }
-			| set {sample_sheet}
-		// subset fastqs and rename
-		fastq_list 
-			| make_mini 
-			| set {fastq_list}
-	}
-	
+  	Channel.value(params.fastq_source) //default = true
+      		| get_fastq // download if command is give
+      	
+	// Get fastq files organized
+      	get_fastq.out.done
+      		| flatMap { Channel.fromPath("$launchDir/**/*fastq.gz") } // find all fastqs
+      		| filter { !it.toString().contains('/work/') } // exclude those in 'work'
+		| map { params.mini ? make_mini(it) : it } // miniaturize if true
+      		| set {fastq_list}
+		
 	// pair up fastq files by sample_id
 	fastq_list
 		| map{ file ->
@@ -150,10 +137,13 @@ process make_sample_table {
  * Pull fastq files
  */
 process get_fastq {
+	publishDir "$launchDir/fastqs", mode: 'copy', pattern: "**"
+	
 	input:
 		val input_file_source
 	output:
-		path "**fastq.gz"
+		path "**", emit: files
+		val true, emit: done
 	script:
 		"""
 		sh ${projectDir}/bin/get_files.sh "${input_file_source}"
