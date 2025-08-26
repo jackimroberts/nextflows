@@ -48,17 +48,23 @@ workflow {
 		| set {sample_sheet}
 
 	// Download fastq files
-	//input_fastq_source 
-  	Channel.value(params.fastq_source) //default = true
-      		| get_fastq // download if command is give
+	Channel.value(params.fastq_source)
+		| get_fastq // download if command is given
       	
-	// Get fastq files organized
-      	get_fastq.out.done
-      		| flatMap { Channel.fromPath("$launchDir/**/*fastq.gz") } // find all fastqs
-      		| filter { !it.toString().contains('/work/') } // exclude those in 'work'
-		| map { params.mini ? make_mini(it) : it } // miniaturize if true
-      		| set {fastq_list}
-		
+	// Channel for existing fastq files (search current directory and subdirectories)
+	Channel.fromPath("**/*fastq*", checkIfExists: false)
+		| filter { it.exists() && !it.toString().contains('/work/') } // exclude those in 'work'
+		| set { existing_files }
+
+	// Combine downloaded and existing files
+	get_fastq.out
+		.mix(existing_files)
+		| decompress // Handles *ora compression
+		| flatten // flattens list
+		| map { params.mini ? make_mini(it) : it } // miniaturize
+		| set set { fastq_list }
+
+/*		
 	// pair up fastq files by sample_id
 	fastq_list
 		| map{ file ->
@@ -94,7 +100,7 @@ workflow {
 		| join (sample_sheet)
 		| map { row -> [row[3], row[1], row[4]] }
 		| set {bam_sample_sheet} 
-	
+*/	
 	/*
 	// callpeaks, merge
 	
@@ -106,6 +112,7 @@ workflow {
 	| group_tuple 
 	| run_multimacs
 	*/
+/*
 	// run Tim's pipeline
 	bam_sample_sheet
 		| map{ row -> [row[2],row[1]] }
@@ -114,6 +121,7 @@ workflow {
 		| collect
 		| create_multimacs_run 
 		//| run_multimacs | view
+*/
 }
 
 
@@ -137,16 +145,31 @@ process make_sample_table {
  * Pull fastq files
  */
 process get_fastq {
-	publishDir "$launchDir/fastqs", mode: 'copy', pattern: "**"
-	
 	input:
 		val input_file_source
 	output:
-		path "**", emit: files
-		val true, emit: done
+		path "**/*fastq*"
 	script:
 		"""
 		sh ${projectDir}/bin/get_files.sh "${input_file_source}"
+		"""
+}
+
+/*
+ * decompress ora files to *gz format
+ */
+process decompress {
+	input:
+		path fastq_file
+	output:
+		path "*fastq.gz", includeInputs: true
+	script:
+
+		"""
+		if [[ "${fastq_file}" == *".ora" ]]; then
+			# module load oradecompression/2.7.0
+			/uufs/chpc.utah.edu/common/home/hcibcore/atlatl/app/orad/2.7.0/orad "${fastq_file}" --rm
+		fi
 		"""
 }
 
