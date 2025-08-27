@@ -165,21 +165,20 @@ process run_cellranger {
 		path "${sample_name}"
 	script:
 		"""
-		#place sample fastqs in their individual folder
-		mkdir -p ${sample_id}_fastqs
-		cp $fastqs ${sample_id}_fastqs
+		# place fastq symlinks in a folder
+		mkdir -p fastq_folder
+		ln -sf $fastqs fastq_folder/
 		
-		#submit to cellranger
+		# submit to cellranger
 		sh ${projectDir}/bin/run_cellranger.sh \
 			$sample_name \
-			${sample_id}_fastqs \
+			fastq_folder \
 			${params.cellRanger_transcriptome} \
 			${params.expected_cell_number} \
 			${params.run_velocyto}
 
 		#change id to name from here
-		#mv ${sample_id} ${sample_name}
-		rm -r ${sample_id}_fastqs
+		mv ${sample_id} ${sample_name}
 		"""
 }
 		
