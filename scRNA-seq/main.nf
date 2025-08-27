@@ -4,6 +4,8 @@ params.expected_cell_number = 10000
 params.fastq_source = true
 //params.fastq_source = "empty"
 params.sample_table = "*txt"
+params.run_velocyto = false
+params.miniaturize = false
 
 params.help = false
 if (params.help) {
@@ -18,15 +20,21 @@ if (params.help) {
 		Can be manually generated with format "ID" "name" "condition"
 			ID is the unique fastq file prefix
 
-	--fastq_source "java -jar ./fdt....gnomex..."
+	--fastq_source="java -jar ./fdt....gnomex..."
 		Pulls fastq files from gnomex
 			get this command from:
 			gnomex > navigate to experiment > "Files" > "Download Files" > 
 				move fastq folder to the right > "FDT Command Line" > copy command
 		default is 'true' and will search for **fastq.gz in launch folder
 	
-	--expected_cell_number 10000
-		Used by CellRanger default 10,000 cells	
+	--expected_cell_number integer
+		Used by CellRanger (default: 10000)	
+
+	--run_velocyto true/false
+		Run velocyto analysis (default: false)
+		
+	--miniaturize true/false
+		Create mini fastq files of 1M reads for testing (default: false)
 
         """
         exit 0
@@ -42,7 +50,7 @@ workflow {
 
 	// Download fastq files
 	//input_fastq_source 
-Channel.value(params.fastq_source)
+	Channel.value(params.fastq_source)
 		| get_fastq // download if command is given
       	
 	// Find existing fastq files
@@ -55,6 +63,7 @@ Channel.value(params.fastq_source)
 		.mix(existing_files)
 		| decompress // Handles *ora compression
 		| flatten // flattens list
+		| map { params.miniaturize ? miniaturize(it) : it } // downsize fastq if true
 		| set set { fastq_list }
 
 	// pair up fastq files by sample id
@@ -72,23 +81,12 @@ Channel.value(params.fastq_source)
 	// run pipeline for individual samples
 	paired_fastq 
 		| run_cellranger
+		| map { params.run_velocyto ? run_velocyto(it) : it } //velocyto if true
 		| collect 
 		| seurat_markdown
 		//| make_shiny
 
-/*
-	// run pipeline for individual samples
-	paired_fastq 
-		| run_cellranger
-		| run_velocyto
-
-	run_velocyto.out.file_tree 
-		| collect 
-		| seurat_markdown
-		//| make_shiny
-*/
 }
-
 
 /*
  * generate table with specific format:
@@ -141,14 +139,16 @@ process decompress {
 /*
  * Make mini fastq for testing
  */
-process make_mini {
+process miniaturize {
+	stageInMode 'copy'
 	input:
-		path fastq_files
+		path fastq_file
 	output:
-		path "mini*"
+		path "${fastq_file}"
 	script:
 		"""
-		head -n 1000000 $fastq_files > mini$fastq_files
+		head -n 1000000 $fastq_file > temp_${fastq_file}
+		mv temp_${fastq_file} ${fastq_file}
 		"""
 }
 
@@ -188,14 +188,12 @@ process run_cellranger {
  * produces loom file containing spliced and unspliced information
  */
 process run_velocyto {
-	publishDir 'output', pattern: '**html', mode: 'copy', overwrite: true
-	//runs out of memory in parallel
-	maxForks 1
+	publishDir 'output', pattern: '**loom', mode: 'copy', overwrite: true
 	input:
 		path cellRanger_out
 	output:
 		path "${cellRanger_out}", emit: file_tree
-		path '**html', emit: loom_file
+		path '**loom', emit: loom_file
 	script:
 		"""
 		module load velocyto
