@@ -156,7 +156,9 @@ process miniaturize {
  * run cellRanger
  */
 process run_cellranger {
-	//publishDir 'output', pattern: '**html', mode: 'copy', overwrite: true
+	publishDir 'output', pattern: '**/web_summary.html', mode: 'copy', overwrite: true
+	publishDir 'output', pattern: '**/filtered_feature_bc_matrix.h5', mode: 'copy', overwrite: true
+	publishDir 'output', pattern: '**/metrics_summary.csv', mode: 'copy', overwrite: true
 	input:
 		tuple val(sample_id), val(sample_name), path(fastqs)
 	output:
@@ -164,24 +166,22 @@ process run_cellranger {
 	script:
 		"""
 		#place sample fastqs in their individual folder
-		mkdir ${sample_id}_fastqs
+		mkdir -p ${sample_id}_fastqs
 		cp $fastqs ${sample_id}_fastqs
 		
 		#submit to cellranger
 		sh ${projectDir}/bin/run_cellranger.sh \
-			$sample_id \
+			$sample_name \
 			${sample_id}_fastqs \
 			${params.cellRanger_transcriptome} \
-			${params.expected_cell_number}
+			${params.expected_cell_number} \
+			${params.run_velocyto}
 
 		#change id to name from here
-		mv ${sample_id} ${sample_name}
+		#mv ${sample_id} ${sample_name}
 		rm -r ${sample_id}_fastqs
 		"""
 }
-/*
-* rm -r ${sample_id}_fastqs
-*/
 		
 /*
  * run velocyto
