@@ -39,7 +39,7 @@ if (params.help) {
 		Run velocyto analysis (default: false)
 		
 	--miniaturize true/false
-		Create mini fastq files of 1M reads for testing (default: false)
+		Create mini fastq files of 250k reads for testing (default: false)
 
         """
         exit 0
@@ -53,23 +53,23 @@ workflow {
 		| splitCsv( sep:"\t") 
 		| set {sample_sheet}
 
-	// Download fastq files
-	//input_fastq_source 
-	Channel.value(params.fastq_source)
-		| get_fastq // download if command is given
-      	
 	// Find existing fastq files
-	Channel.fromPath("**/*fastq*", checkIfExists: false)
+	Channel.fromPath("**fastq*", checkIfExists: false)
 		| filter { it.exists() && !it.toString().contains('/work/') } // exclude those in 'work'
 		| set { existing_files }
 
-	// Combine downloaded and existing files
-	get_fastq.out
-		.mix(existing_files)
+	// Downloaded files if specified and combine with existing files
+	// Uses (condition ? process_a : process_b) syntax
+	(params.fastq_source != true ? Channel.value(params.fastq_source) | get_fastq : Channel.empty())
+		| mix(existing_files)
 		| decompress // Handles *ora compression
-		| flatten // flattens list
-		| map { params.miniaturize ? miniaturize(it) : it } // downsize fastq if true
-		| set { fastq_list }
+		| flatten
+		| set { flat_fastq_list }
+
+	// Downsize fastq for faster runs
+        if (params.miniaturize == true) {
+            flat_fastq_list | miniaturize | set { fastq_list }
+        } else { flat_fastq_list | set { fastq_list } }
 
 	// pair up fastq files by sample id
 	// replace sample id with name
@@ -86,7 +86,14 @@ workflow {
 	// run pipeline for individual samples
 	paired_fastq 
 		| run_cellranger
-		| map { params.run_velocyto ? run_velocyto(it) : it } //velocyto if true
+
+	// Run velocyto splicing count if true
+        if (params.run_velocyto == true) {
+            run_cellranger.out | run_velocyto | set { alignment_output }
+        } else { run_cellranger.out | set { alignment_output } }
+	
+	// Aggregate and create reports
+	alignment_output
 		| collect 
 		| seurat_markdown
 		//| make_shiny

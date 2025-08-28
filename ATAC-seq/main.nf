@@ -1,6 +1,6 @@
 #!/usr/bin/env nextflow
 
-params.mini = false
+params.miniaturize = false
 params.fastq_source = true
 params.sample_table = "*.txt"
 
@@ -34,41 +34,45 @@ if (params.help) {
 			One SRA ID per line (SRR...), skips comments and empty lines
 			(default: true)
 	
-	--mini	subsets fastq files to 100k reads
+	--miniaturize true/false
+		Create mini fastq files of 2,500 reads for testing (default: false)
+
 
         """
         exit 0
     }
 
-input_fastq_source = Channel.value(params.fastq_source)
-input_sample_details = Channel.fromPath(params.sample_table)
-
 workflow {
 
 	// wrangle sample sheet into specific format: id, name, condition
-	input_sample_details 
+	Channel.fromPath(params.sample_table)
 		| make_sample_table 
 		| splitCsv(header:['sample_id','sample_name','condition'], sep:"\t") 
 		| set {sample_sheet}
-
-	// Download fastq files
-	Channel.value(params.fastq_source)
-		| get_fastq // download if command is given
       	
-	// Channel for existing fastq files (search current directory and subdirectories)
-	Channel.fromPath("**/*fastq*", checkIfExists: false)
+	// Find existing fastq files
+	Channel.fromPath("**fastq*", checkIfExists: false)
 		| filter { it.exists() && !it.toString().contains('/work/') } // exclude those in 'work'
 		| set { existing_files }
 
-	// Combine downloaded and existing files
-	get_fastq.out
-		.mix(existing_files)
+	// Downloaded files if specified and combine with existing files
+	// Uses (condition ? process_a : process_b) syntax
+	(params.fastq_source != true ? Channel.value(params.fastq_source) | get_fastq : Channel.empty())
+		|mix(existing_files)
 		| decompress // Handles *ora compression
-		| flatten // flattens list
-		| map { params.mini ? make_mini(it) : it } // miniaturize
-		| set set { fastq_list }
+		| flatten
+		| set { flat_fastq_list }
 
-/*		
+	// Downsize fastq for faster runs
+        if (params.miniaturize == true) {
+            flat_fastq_list
+		| miniaturize
+		| set { fastq_list }
+        } else {
+            flat_fastq_list
+		| set { fastq_list }
+        }
+		
 	// pair up fastq files by sample_id
 	fastq_list
 		| map{ file ->
@@ -104,7 +108,7 @@ workflow {
 		| join (sample_sheet)
 		| map { row -> [row[3], row[1], row[4]] }
 		| set {bam_sample_sheet} 
-*/	
+	
 	/*
 	// callpeaks, merge
 	
@@ -127,7 +131,6 @@ workflow {
 		//| run_multimacs | view
 */
 }
-
 
 /*
  * generate table with specific format:
@@ -180,14 +183,16 @@ process decompress {
 /*
  * Make mini fastq for testing
  */
-process make_mini {
+process miniaturize {
+	stageInMode 'copy'
 	input:
-		path fastq_files
+		path fastq_file
 	output:
-		path "mini*"
+		path "${fastq_file}"
 	script:
 		"""
-		head -n 100000 $fastq_files > mini.$fastq_files
+		head -n 100000 $fastq_file > temp_${fastq_file}
+		mv temp_${fastq_file} ${fastq_file}
 		"""
 }
 
