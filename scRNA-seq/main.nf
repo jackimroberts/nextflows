@@ -25,7 +25,9 @@ if (params.help) {
 			get this command from:
 			gnomex > navigate to experiment > "Files" > "Download Files" > 
 				move fastq folder to the right > "FDT Command Line" > copy command
-		default is 'true' and will search for **fastq.gz in launch folder
+	--fastq_source="SSD/YYYYMMDD_run_identifier/email_subject_line:password"
+		UCSF core emails a filepath 
+		(default: true)
 	
 	--expected_cell_number integer
 		Used by CellRanger (default: 10000)	
