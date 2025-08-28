@@ -6,9 +6,7 @@ params.sample_table = "*.txt"
 
 /*
  * Things I'd like to add:
- ** Ability to get SRA, ucsf files
- ** ora decompress
- ** change publishDir based on sample names
+ ** Ability to get SRA files
  ** add sample names and conditions
  ** tidy up all scripts with headers
  ** qc throughout
@@ -19,16 +17,22 @@ params.sample_table = "*.txt"
 params.help = false
 if (params.help) {
         println """
-        This pipeline is designed to process ATAC-seq data beginning from fastq files
+        ATAC-seq nextflow pipeline
 
 	--sample_table *txt
-		Must be in this folder. Table from gnomex
+		Must be in launch folder. Table from gnomex
 
 	--fastq_source="java -jar ./fdt....gnomex..."
-		Pulls fastq files from gnomex
-		get this command from:
-		gnomex > navigate to experiment > "Files" > "Download Files" > 
-			move over fastq folder > "FDT Command Line" > copy command
+			Pulls fastq files from gnomex
+				get this command from:
+				gnomex > navigate to experiment > "Files" > "Download Files" > 
+					move fastq folder to the right > "FDT Command Line" > copy command
+		="SSD/YYYYMMDD_run_identifier/email_subject_line:password"
+			UCSF core emails a filepath and password after sequencing 
+		="SRA"
+			Using sample table text file, downloads fastqs from SRA repository
+			One SRA ID per line (SRR...), skips comments and empty lines
+			(default: true)
 	
 	--mini	subsets fastq files to 100k reads
 
@@ -148,7 +152,7 @@ process get_fastq {
 	input:
 		val input_file_source
 	output:
-		path "**/*fastq*"
+		path "**fastq*"
 	script:
 		"""
 		sh ${projectDir}/bin/get_files.sh "${input_file_source}"

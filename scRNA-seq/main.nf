@@ -10,10 +10,10 @@ params.miniaturize = false
 params.help = false
 if (params.help) {
         println """
-        This pipeline is designed to pull fastq files from Gnomex and run scRNA-seq
-
+        scRNA-seq nextflow pipeline
+	
 	--sample_table *txt
-		Must be in this folder. 
+		Must be in the launch folder. 
 		Table from gnomex contains "ID" and "Sample Name"
 			gnomex > navigate to experiment > "Experiment Design" > "Download Sample Sheet" > 
 				move to the launch folder
@@ -21,13 +21,16 @@ if (params.help) {
 			ID is the unique fastq file prefix
 
 	--fastq_source="java -jar ./fdt....gnomex..."
-		Pulls fastq files from gnomex
-			get this command from:
-			gnomex > navigate to experiment > "Files" > "Download Files" > 
-				move fastq folder to the right > "FDT Command Line" > copy command
-	--fastq_source="SSD/YYYYMMDD_run_identifier/email_subject_line:password"
-		UCSF core emails a filepath 
-		(default: true)
+			Pulls fastq files from gnomex
+				get this command from:
+				gnomex > navigate to experiment > "Files" > "Download Files" > 
+					move fastq folder to the right > "FDT Command Line" > copy command
+		="SSD/YYYYMMDD_run_identifier/email_subject_line:password"
+			UCSF core emails a filepath and password after sequencing 
+		="SRA"
+			Using sample table text file, downloads fastqs from SRA repository
+			One SRA ID per line (SRR...), skips comments and empty lines
+			(default: true)
 	
 	--expected_cell_number integer
 		Used by CellRanger (default: 10000)	
@@ -66,7 +69,7 @@ workflow {
 		| decompress // Handles *ora compression
 		| flatten // flattens list
 		| map { params.miniaturize ? miniaturize(it) : it } // downsize fastq if true
-		| set set { fastq_list }
+		| set { fastq_list }
 
 	// pair up fastq files by sample id
 	// replace sample id with name
@@ -113,7 +116,7 @@ process get_fastq {
 	input:
 		val input_file_source
 	output:
-		path "**/*fastq*"
+		path "**fastq*"
 	script:
 		"""
 		sh ${projectDir}/bin/get_files.sh "${input_file_source}"
