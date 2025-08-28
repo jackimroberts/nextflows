@@ -56,10 +56,18 @@ workflow {
 		| set { existing_files }
 
 	// Downloaded files if specified and combine with existing files
-	// Uses (condition ? process_a : process_b) syntax
+	// Separate files by type and handle appropriately
 	(params.fastq_source != true ? Channel.value(params.fastq_source) | get_fastq : Channel.empty())
-		|mix(existing_files)
-		| decompress // Handles *ora compression
+		| mix(existing_files)
+		| branch {
+			ora_files: it.name.endsWith('.ora')
+			gz_files: it.name.endsWith('.gz')
+		}
+
+	// Only decompress .ora files, then mix with .gz files
+	ora_files
+		| decompress
+		| mix(gz_files)
 		| flatten
 		| set { flat_fastq_list }
 
