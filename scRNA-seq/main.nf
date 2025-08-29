@@ -50,7 +50,8 @@ workflow {
 	// wrangle sample sheet into specific format: id, name, condition
 	Channel.fromPath(params.sample_table)
 		| make_sample_table
-		| splitCsv( sep:"\t") 
+		| splitCsv(header:['sample_id','sample_name','condition'], sep:"\t") 
+		| map { row -> [row.sample_id, row.sample_name, row.condition] }
 		| set {sample_sheet}
 
 	// Find existing fastq files
@@ -63,14 +64,15 @@ workflow {
 	(params.fastq_source != true ? Channel.value(params.fastq_source) | get_fastq : Channel.empty())
 		| mix(existing_files)
 		| branch {
-			ora_files: it.name.endsWith('.ora')
-			gz_files: it.name.endsWith('.gz')
+			ora: it.name.endsWith('.ora')
+			other: true // should catch *fastq and *fastq.gz
 		}
+		| set { files }
 
 	// Only decompress .ora files, then mix with .gz files
-	ora_files
+	files.ora
 		| decompress
-		| mix(gz_files)
+		| mix(files.other)
 		| flatten
 		| set { flat_fastq_list }
 
@@ -80,21 +82,22 @@ workflow {
         } else { flat_fastq_list | set { fastq_list } }
 	
 	// pair up fastq files by sample id
-	// replace sample id with name
 	sample_sheet
-		| map { row -> [row[0], row[1], row[2]] }  // id, name, condition
 		| combine ( fastq_list )
 		| filter { sample_id, sample_name, condition, fastq_file ->
 			fastq_file.name.startsWith(sample_id + "_")
 		}
-		| map { row -> [row[0], row[1], row[3]]	} // id, name, fastq_file
-		| set { paired_fastq }
+      		| map { sample_id, sample_name, condition, fastq_file ->
+          		def meta = [id: sample_id, name: sample_name, condition: condition]
+          		[meta.id, meta, fastq_file]
+      		}
+      		| groupTuple()  // Group by id
+      		| map { id, meta, fastq_files ->
+          		[meta[0], fastq_files]
+      		}
+		| run_cellranger // run pipeline for individual samples
 
-	// run pipeline for individual samples
-	paired_fastq 
-		| run_cellranger
-
-	// Run velocyto splicing count if true
+	// Run velocyto splice counting if true
         if (params.run_velocyto == true) {
             run_cellranger.out | run_velocyto | set { alignment_output }
         } else { run_cellranger.out | set { alignment_output } }
@@ -144,7 +147,7 @@ process decompress {
 	input:
 		path fastq_file
 	output:
-		path "*fastq.gz", includeInputs: true
+		path "*fastq.gz"
 	script:
 
 		"""
@@ -179,25 +182,21 @@ process run_cellranger {
 	publishDir 'output', pattern: '**/filtered_feature_bc_matrix.h5', mode: 'copy', overwrite: true
 	publishDir 'output', pattern: '**/metrics_summary.csv', mode: 'copy', overwrite: true
 	input:
-		tuple val(sample_id), val(sample_name), path(fastqs)
+		tuple val(meta), path(fastqs, stageAs: 'fastq_folder/*')
 	output:
-		path "${sample_name}"
+		path "${meta.name}"
 	script:
 		"""
-		# place fastq symlinks in a folder
-		mkdir -p fastq_folder
-		ln -sf $fastqs fastq_folder/
-		
 		# submit to cellranger
 		sh ${projectDir}/bin/run_cellranger.sh \
-			$sample_name \
+			${meta.name} \
 			fastq_folder \
 			${params.cellRanger_transcriptome} \
 			${params.expected_cell_number} \
 			${params.run_velocyto}
 
 		#change id to name from here
-		mv ${sample_id} ${sample_name}
+		mv ${meta.id} ${meta.name}
 		"""
 }
 		
