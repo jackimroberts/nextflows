@@ -1,5 +1,6 @@
 #!/bin/bash
 
+#BLACK=$HCI/data/Mouse/Mm10/mm10.blacklist.bed
 # Note: blacklist filtering is handled in filter_bams process
 NCPU=`nproc`
 
@@ -21,4 +22,4 @@ multirep_macs2_pipeline.pl \
 --peakgap 75 \
 --chrskip 'chrM' \
 #--blacklist $BLACK \
---cpu $(nproc)
+--cpu $NCPU

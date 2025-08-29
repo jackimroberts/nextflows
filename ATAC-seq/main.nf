@@ -110,12 +110,12 @@ workflow {
       		}
 	// Trim and align individual sequencing runs
 		| adapter_trim 
-		| bowtie_align
-	// Combine samples by sample id
-		| map { meta, bam_file ->
-			[meta.id, meta, bam_file]
+		| bowtie_align 
+			| map { meta, bam_file ->
+				[meta.id, meta, bam_file]
 		}
 		| groupTuple
+	// Combine samples from different runs
 	// Merge bam files, filter, and calculate depth
 		| map { sample_id, meta_list, bam_files ->
 			[meta_list[0], bam_files]
@@ -148,19 +148,12 @@ workflow {
 	*/
 /*
 	// run Tim's pipeline
-	filtered_bams_with_depth
-		| map { meta, bam_file ->
-			[meta.condition, meta, bam_file]
-		}
+	bam_sample_sheet
+		| map{ row -> [row[2],row[1]] }
 		| groupTuple
-		| map { condition, meta, bam_files ->
-			[meta[0], bam_files]
-		| tuple_to_stdout
-		| tap { item -> println "Tapped stdout: $item" }
+		| tuple_to_stdout  
 		| collect
-		| tap { item -> println "Tapped colled: $item" }
 		| create_multimacs_run 
-		| tap { item -> println "Tapped run: $item" }
 		//| run_multimacs | view
 */
 }
@@ -177,7 +170,7 @@ process make_sample_table {
 	script:
 		"""
 		module load R
-		Rscript ${projectDir}/../shared_bin/make_sample_table.R $input_sample_table
+		Rscript ${projectDir}/bin/make_sample_table.R $input_sample_table
 		"""
 }
 
@@ -192,7 +185,7 @@ process get_fastq {
 		path "**fastq*"
 	script:
 		"""
-		sh ${projectDir}/../shared_bin/get_files.sh "${input_file_source}" "${params.sample_table}"
+		sh ${projectDir}/bin/get_files.sh "${input_file_source}" "${params.sample_table}"
 		"""
 }
 
@@ -225,11 +218,7 @@ process miniaturize {
 		path "${fastq_file}"
 	script:
 		"""
-          	if [[ "${fastq_file}" == *.gz ]]; then
-              		zcat $fastq_file | head -n 1000000 | gzip > temp_${fastq_file}
-          	else
-              		head -n 1000000 $fastq_file > temp_${fastq_file}
-          	fi
+		head -n 100000 $fastq_file > temp_${fastq_file}
 		mv temp_${fastq_file} ${fastq_file}
 		"""
 }
@@ -244,21 +233,7 @@ process adapter_trim {
 		tuple val(meta), path('*fq')
 	script:
 		"""
-          	#!/bin/bash
-          	# TruSeq adapters for Active Motif ATAC-seq
-		ADAPTF=CTGTCTCTTATACACATCT
-		ADAPTR=CTGTCTCTTATACACATCT
-
-		# load cutadapt module
-		module load cutadapt
-
-		#cutadapt
-		echo "=== adapter trimming"
-		which cutadapt
-		cutadapt -O 1 --nextseq-trim=20 -m 1 -a $ADAPTF -A $ADAPTR \
-			-o ${meta.id}_${meta.run}.1.fq -p ${meta.id}_${meta.run}.2.fq \
-			$fastqs
-
+		sh ${projectDir}/bin/adapter_trim.sh ${meta.id}_${meta.run} $fastqs
 		"""
 }
 
@@ -271,22 +246,8 @@ process bowtie_align {
 	output:
 		tuple val(meta), path('*raw.bam')
 	script:
-		def r1 = fastqs.find { it.name.contains('.1.fq') }
-		def r2 = fastqs.find { it.name.contains('.2.fq') }
 		"""
-		#!/bin/bash
-
-		# load required modules
-		module load bowtie2
-		module load samtools
-
-		echo "=== align paired-end reads with bowtie2"
-		which bowtie2
-		which samtools
-
-		bowtie2 --local --very-sensitive --no-mixed --no-discordant -p \$(nproc) \
-			-x ${params.genome_index} -1 $r1 -2 $r2 | \
-			samtools view -bS -o ${meta.id}_${meta.run}.raw.bam
+		sh ${projectDir}/bin/bowtie_align.sh $fastqs ${meta.id}_${meta.run} ${params.genome_index}
 		"""
 }
 
@@ -336,21 +297,7 @@ process bam_to_bigwig {
 		path "*bw"
 	script:
 		"""
-		#!/bin/bash
-		
-		# load required modules
-		module load samtools
-		module load deeptools
-
-		# create scale based on depth and minimum depth of all samples
-		scale=\$(echo "scale=5; $min_depth/${meta.depth}" | bc)
-
-		# index bam and generate bigwig
-		echo "=== generate bigwig from bam, scaled to smallest bam in group"
-		which samtools
-		which deeptools
-		samtools index $bam
-		bamCoverage -b $bam --scaleFactor \$scale -o ${meta.name}.bw
+		sh ${projectDir}/bin/bam_to_bigwig.sh ${meta.name} $bam ${meta.depth} $min_depth
 		"""
 }
 
@@ -364,35 +311,19 @@ process tuple_to_stdout {
 		stdout
 	script:
 		"""
-		# Creates stdout in the format:
-			# --chip /file1, /file2
-			# --name condition1
-			# --chip /file3, /file4
-			# --name condition2
-
 		echo --chip $bam_files
 		echo --name ${meta.condition}
 		"""
 }
 process create_multimacs_run {
-	publishDir 'multimacs_pipeline', mode: 'copy'
+publishDir 'multimacs_pipeline', mode: 'copy'
 	input:
 		stdin str
 	output:
-		//path "*sh"
-		stdout
+		path "*sh"
 	script:
 		"""
-		#!/bin/bash
-		# Wrangle stdin into appropriate format:
-			# --chip /file1,/file2 \
-			# --name condition1 \
-			# --chip /file3,/file4 \
-			# --name condition2 \
-
-		chip_details=\$(cat - | tr "]" " " | tr "[" " " | tr "\n" " " | sed -e 's/, --/--/')
-
-		echo \$chip_details
+		sh ${projectDir}/bin/create_multimacs_run.sh ${projectDir}/bin/multimacs_run_template.txt
 		"""
 }
 process run_multimacs {
