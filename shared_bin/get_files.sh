@@ -1,14 +1,39 @@
 #!/bin/bash
-# converts gnomex provided command to utah chpc script
-# downloads fastq files
 
-# command line argument received
+## ---------------------------
+##
+## Script name: get_files
+##
+## Purpose of script: 
+##	Download fastq files from multiple sources (GNomEx, Core Browser, UCSF, SRA)
+##	Supports parallel downloads and generates checksums
+##
+## ---------------------------
+##
+## Usage:
+##	./get_files.sh <input_sources> <sample_table>
+##	
+##	input_sources: Comma-separated list of sources (gnomex, CoreBrowser, UCSF:password, SRA)
+##	sample_table: Path to sample table file (required for SRA downloads)
+##
+## ---------------------------
+##
+## Notes:
+##	Handles comma-separated list of sources
+##	Uses appropriate tools for each source: FDT (GNomEx), aria2 (Core Browser), lftp (UCSF), sra-toolkit (SRA)
+##	Optimized for parallel processing using available CPU cores
+##
+## ---------------------------
+
+
+## Handle command line arguments received
 input_sources="$1"
 sample_table="$2"
 
+## Load required modules
 module load parallel
 
-# Split comma-separated sources and process each
+## Split comma-separated sources and process each
 IFS=',' read -ra SOURCES <<< "$input_sources"
 for source in "${SOURCES[@]}"; do
 	# Trim whitespace
@@ -68,6 +93,6 @@ for source in "${SOURCES[@]}"; do
 	fi
 done
 
-# Generate checksums for all downloaded files
+## Generate checksums for all downloaded files
 echo "=== Generating checksums"
 md5sum **fastq* > md5_downloads.txt 2>/dev/null || echo "No fastq files to checksum"

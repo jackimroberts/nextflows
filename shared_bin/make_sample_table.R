@@ -9,8 +9,16 @@
 ##
 ## ---------------------------
 ##
+## Usage:
+##	./make_sample_table.R <input_filename>
+##	
+##	input_filename: Path to input sample table file
+##
+## ---------------------------
+##
 ## Notes:
-##	Currently only tested for sample table from Gnomex
+##	Tested for sample table from Gnomex
+##	Also works for manually curated table with ID, name, condition
 ##
 ## ---------------------------
 
@@ -29,12 +37,16 @@ args = commandArgs(TRUE)
 
 input_filename <- args[1]
 
-input_table <- read_tsv(input_filename) %>% 
-	select(ID,`Sample Name`) %>%
-	rename(name=`Sample Name`) %>%
-	mutate(name=str_replace_all(name," ","_"), # spaces are now underscores
-		name=str_replace_all(name,"#",""), # removed hashtags
-		condition = sub(".* ","",name))	# took the last part of the name as condition...
+input_table <- read_tsv(input_filename) 
+
+if(all(c("ID","Sample Name") %in% colnames(input_table))){
+	input_table<- input_table %>% 
+		select(ID,`Sample Name`) %>%
+		rename(name=`Sample Name`) %>%
+		mutate(name=str_replace_all(name," ","_"), # spaces are now underscores
+			name=str_replace_all(name,"#",""), # removed hashtags
+			condition = sub(".*_","",name))	# took the last part of the name as condition...
+}
 
 ## ---------------------------
 
