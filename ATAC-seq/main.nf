@@ -48,6 +48,7 @@ workflow {
 	Channel.fromPath(params.sample_table)
 		| make_sample_table 
 		| splitCsv(header:['sample_id','sample_name','condition'], sep:"\t") 
+		| map { row -> [row.sample_id, row.sample_name, row.condition] }
 		| set {sample_sheet}
       	
 	// Find existing fastq files
@@ -81,42 +82,48 @@ workflow {
 		| set { fastq_list }
         }
 		
-	// pair up fastq files by sample_id
-	fastq_list
-		| map{ file ->
-            		def sample_id = file.name.replaceAll("_.*", "")
-            		tuple(sample_id, file)
-        	  }
-        	| groupTuple
-		| set {paired_fastq}
-	
-	// run pipeline for individual samples
-	paired_fastq 
+	// pair up fastq files by sample id and run, keeping runs separate
+ 	sample_sheet
+     		| combine(fastq_list)
+      		| filter { sample_id, sample_name, condition, fastq_file ->
+          		fastq_file.name.startsWith(sample_id + "_")
+      		}
+      		| map { sample_id, sample_name, condition, fastq_file ->
+          		def run_part = fastq_file.name.replaceAll("^${sample_id}_", "").replaceAll("[-_]?[LR][12].*", "")
+          		def meta = [id: sample_id, name: sample_name, condition: condition, run: run_part]
+          		[[meta.id, meta.run], meta, fastq_file]
+      		}
+      		| groupTuple()  // Group by the [id, run] tuple
+      		| map { id_run_tuple, meta_list, fastq_files ->
+          		[meta_list[0], fastq_files]
+      		}
+	// Trim and align individual sequencing runs
 		| adapter_trim 
 		| bowtie_align 
+			| map { meta, bam_file ->
+				[meta.id, meta, bam_file]
+		}
+		| groupTuple
+	// Combine samples from different runs
+	// Merge bam files, filter, and calculate depth
+		| map { sample_id, meta_list, bam_files ->
+			[meta_list[0], bam_files]
+	 	}
+		| merge_run_bams
 		| filter_bams
-	
-	// replace sample number with name
-	// keep name, bamfile, depth for bam to bw
-	filter_bams.out
-		| join (sample_sheet)
-		| map { row -> [row[3], row[1], row[2]] }
-		| set {named_filtered_bams}
-	view(named_filtered_bams)
-	// find min_depth and append to tuple
-	named_filtered_bams
-		| map{ row -> row[2]}
-		| min()
-		| combine(named_filtered_bams) 
-		| bam_to_bigwig
-	
-	// replace sample number with name
-	// keep name, bamfile, condition for peakcalling
-	filter_bams.out
-		| join (sample_sheet)
-		| map { row -> [row[3], row[1], row[4]] }
-		| set {bam_sample_sheet} 
-	
+		| map { meta, bam_file, depth ->
+          		def more_meta = meta + [depth: depth.trim()]
+          		[more_meta, bam_file]
+		}
+		| set { filtered_bams_with_depth }
+
+  	// Find minimum depth across all samples for scaling
+  	filtered_bams_with_depth
+      		| map { meta, bam_file -> meta.depth as Integer }
+      		| min()
+      		| combine(filtered_bams_with_depth) // [min_depth, meta, bam_file]
+      		| bam_to_bigwig
+		
 	/*
 	// callpeaks, merge
 	
@@ -209,12 +216,12 @@ process miniaturize {
  */
 process adapter_trim {
 	input:
-		tuple val(sample_num), path(fastqs)
+		tuple val(meta), path(fastqs)
 	output:
-		tuple val(sample_num), path('*fq')
+		tuple val(meta), path('*fq')
 	script:
 		"""
-		sh ${projectDir}/bin/adapter_trim.sh $sample_num $fastqs
+		sh ${projectDir}/bin/adapter_trim.sh ${meta.id}_${meta.run} $fastqs
 		"""
 }
 
@@ -223,13 +230,33 @@ process adapter_trim {
  */
 process bowtie_align {
 	input:
-		tuple val(sample_num), path(fastqs)
+		tuple val(meta), path(fastqs)
 	output:
-		tuple val(sample_num), path('*raw.bam')
+		tuple val(meta), path('*raw.bam')
 	script:
 		"""
-		sh ${projectDir}/bin/bowtie_align.sh $fastqs $sample_num ${params.genome_index}
+		sh ${projectDir}/bin/bowtie_align.sh $fastqs ${meta.id}_${meta.run} ${params.genome_index}
 		"""
+}
+
+/*
+ * Combine BAM files from the same sample
+ */
+process merge_run_bams {
+    input:
+        tuple val(meta), path(bam_files)
+    output:
+        tuple val(meta), path("${meta.id}.merged.bam")
+    script:
+        """
+        module load samtools
+        
+        if [ \$(echo $bam_files | wc -w) -gt 1 ]; then
+            samtools merge ${meta.id}.merged.bam $bam_files
+        else
+            ln -s $bam_files ${meta.id}.merged.bam
+        fi
+        """
 }
 
 /*
@@ -238,12 +265,12 @@ process bowtie_align {
  */
 process filter_bams {
 	input:
-		tuple val(sample_num), path(bam)
+		tuple val(meta), path(bam)
 	output:
-		tuple val(sample_num), path('*filtered.bam'), stdout
+		tuple val(meta), path('*filtered.bam'), stdout
 	script:
 		"""
-		sh ${projectDir}/bin/filter_bams.sh $bam $sample_num ${params.genome_blacklist}
+		sh ${projectDir}/bin/filter_bams.sh $bam ${meta.id} ${params.genome_blacklist}
 		"""
 }
 
@@ -253,12 +280,12 @@ process filter_bams {
 process bam_to_bigwig {
 	publishDir 'bigwigs', mode: 'copy'
 	input:
-		tuple val(min_depth), val(sample_name), path(bam), val(depth)
+		tuple val(min_depth), val(meta), path(bam)
 	output:
 		path "*bw"
 	script:
 		"""
-		sh ${projectDir}/bin/bam_to_bigwig.sh $sample_name $bam $depth $min_depth
+		sh ${projectDir}/bin/bam_to_bigwig.sh ${meta.name} $bam ${meta.depth} $min_depth
 		"""
 }
 
@@ -267,13 +294,13 @@ process bam_to_bigwig {
  */
 process tuple_to_stdout {
 	input: 
-		tuple val(condition), val(bam_files)
+		tuple val(meta), val(bam_files)
 	output: 
 		stdout
 	script:
 		"""
 		echo --chip $bam_files
-		echo --name $condition
+		echo --name ${meta.condition}
 		"""
 }
 process create_multimacs_run {
