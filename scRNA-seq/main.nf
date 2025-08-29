@@ -130,7 +130,7 @@ process make_sample_table {
 	script:
 		"""
 		module load R
-		Rscript ${projectDir}/bin/make_sample_table.R $input_sample_table
+		Rscript ${projectDir}/../shared_bin/make_sample_table.R $input_sample_table
 		"""
 }
 
@@ -144,7 +144,7 @@ process get_fastq {
 		path "**fastq*"
 	script:
 		"""
-		sh ${projectDir}/bin/get_files.sh "${input_file_source}"
+		sh ${projectDir}/../shared_bin/get_files.sh "${input_file_source}"
 		"""
 }
 
@@ -177,7 +177,11 @@ process miniaturize {
 		path "${fastq_file}"
 	script:
 		"""
-		head -n 1000000 $fastq_file > temp_${fastq_file}
+          	if [[ "${fastq_file}" == *.gz ]]; then
+              		zcat $fastq_file | head -n 1000000 | gzip > temp_${fastq_file}
+          	else
+              		head -n 1000000 $fastq_file > temp_${fastq_file}
+          	fi
 		mv temp_${fastq_file} ${fastq_file}
 		"""
 }
@@ -195,15 +199,17 @@ process run_cellranger {
 		path "${meta.name}"
 	script:
 		"""
-		# submit to cellranger
-		sh ${projectDir}/bin/run_cellranger.sh \
-			${meta.name} \
-			fastq_folder \
-			${params.cellRanger_transcriptome} \
-			${params.expected_cell_number} \
-			${params.run_velocyto}
+		module load cellranger
+		which cellranger
 
-		#change id to name from here
+		cellranger count --id=${meta.name} \
+			--fastqs=fastq_folder \
+			--transcriptome=${params.cellRanger_transcriptome} \
+			--expect-cells=${params.expected_cell_number} \
+			--create-bam=${params.run_velocyto} \
+			--nosecondary
+
+		#change id to name
 		mv ${meta.id} ${meta.name}
 		"""
 }
