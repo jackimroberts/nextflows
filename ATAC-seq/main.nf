@@ -6,11 +6,9 @@ params.sample_table = "*.txt"
 
 /*
  * Things I'd like to add:
- ** Ability to get SRA files
- ** add sample names and conditions
  ** tidy up all scripts with headers
  ** qc throughout
- ** create container
+ ** create containerized version
  ** deploy on cloud
 */
 
@@ -19,28 +17,40 @@ if (params.help) {
         println """
         ATAC-seq nextflow pipeline
 
-	--sample_table *txt
-		Must be in launch folder. Table from gnomex
+        REQUIRED PARAMETERS:
+        --sample_table *txt
+                Must be in launch folder. Table from gnomex or tsv format: id name condition
 
-	--fastq_source="java -jar ./fdt....gnomex..."
-			Pulls fastq files from gnomex
-				get this command from:
-				gnomex > navigate to experiment > "Files" > "Download Files" > 
-					move fastq folder to the right > "FDT Command Line" > copy command
-		="SSD/YYYYMMDD_run_identifier/email_subject_line:password"
-			UCSF core emails a filepath and password after sequencing 
-		="SRA"
-			Using sample table text file, downloads fastqs from SRA repository
-			One SRA ID per line (SRR...), skips comments and empty lines
-			(default: true)
-	
-	--miniaturize true/false
-		Create mini fastq files of 2,500 reads for testing (default: false)
+        OPTIONAL PARAMETERS:
+        --miniaturize true/false
+                Create mini fastq files of 2,500 reads for testing (default: false)
 
+        --fastq_source="source1,source2,..."
+                Specify input sources, can combine multiple with commas
+                
+                ="java -jar ./fdt....gnomex..."
+                        Pulls fastq files from gnomex
+                        Get this command from:
+                        gnomex > navigate to experiment > "Files" > "Download Files" > 
+                        move fastq folder to the right > "FDT Command Line" > copy command
+                
+                ="CoreBrowser"
+                        Retrieves unarchived files from Utah Core Browser
+                        Select files > More options dropdown menu > Secure link >
+                        paste into a "core_links" text file
+                
+                ="SSD/YYYYMMDD_run_identifier/email_subject_line:password"
+                        UCSF core emails a filepath and password after sequencing
+                
+                ="SRA"
+                        Using sample table text file, downloads fastqs from SRA repository
+                        Finds any SRR#+, skipping comment and empty lines
+                
+                (default: searches for existing fastq files in launch directory)
 
         """
         exit 0
-    }
+}
 
 workflow {
 
@@ -61,14 +71,15 @@ workflow {
 	(params.fastq_source != true ? Channel.value(params.fastq_source) | get_fastq : Channel.empty())
 		| mix(existing_files)
 		| branch {
-			ora_files: it.name.endsWith('.ora')
-			gz_files: it.name.endsWith('.gz')
+			ora: it.name.endsWith('.ora')
+			other: true // should catch *fastq and *fastq.gz
 		}
+		| set { files }
 
 	// Only decompress .ora files, then mix with .gz files
-	ora_files
+	files.ora
 		| decompress
-		| mix(gz_files)
+		| mix(files.other)
 		| flatten
 		| set { flat_fastq_list }
 
@@ -167,13 +178,14 @@ process make_sample_table {
  * Pull fastq files
  */
 process get_fastq {
+	publishDir 'output', pattern: '**md5*', mode: 'copy', overwrite: true
 	input:
 		val input_file_source
 	output:
 		path "**fastq*"
 	script:
 		"""
-		sh ${projectDir}/bin/get_files.sh "${input_file_source}"
+		sh ${projectDir}/bin/get_files.sh "${input_file_source}" "${params.sample_table}"
 		"""
 }
 
@@ -184,7 +196,7 @@ process decompress {
 	input:
 		path fastq_file
 	output:
-		path "*fastq.gz", includeInputs: true
+		path "*fastq.gz"
 	script:
 
 		"""
