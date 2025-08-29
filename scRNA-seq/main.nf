@@ -78,18 +78,17 @@ workflow {
         if (params.miniaturize == true) {
             flat_fastq_list | miniaturize | set { fastq_list }
         } else { flat_fastq_list | set { fastq_list } }
-
+	
 	// pair up fastq files by sample id
 	// replace sample id with name
-	fastq_list
-		| map{ file ->
-            		def sample_id = file.name.replaceAll("_.*", "")
-            		tuple(sample_id, file)
-        		}
-        		| groupTuple
-		| join (sample_sheet)
-		| map { row -> [row[0], row[2], row[1]] }
-		| set {paired_fastq}
+	sample_sheet
+		| map { row -> [row[0], row[1], row[2]] }  // id, name, condition
+		| combine ( fastq_list )
+		| filter { sample_id, sample_name, condition, fastq_file ->
+			fastq_file.name.startsWith(sample_id + "_")
+		}
+		| map { row -> [row[0], row[1], row[3]]	} // id, name, fastq_file
+		| set { paired_fastq }
 
 	// run pipeline for individual samples
 	paired_fastq 
