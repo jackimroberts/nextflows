@@ -8,7 +8,6 @@ module use /uufs/chpc.utah.edu/common/home/hcibcore/Modules/modulefiles
 module load multirepchipseq parallel
 
 multirep_macs2_pipeline.pl \
-#details_here
 --nodedup \
 --independent \
 --maxdepth 10000 \

@@ -70,16 +70,17 @@ workflow {
 	// Separate files by type and handle appropriately
 	(params.fastq_source != true ? Channel.value(params.fastq_source) | get_fastq : Channel.empty())
 		| mix(existing_files)
+		| flatten
 		| branch {
 			ora: it.name.endsWith('.ora')
-			other: true // should catch *fastq and *fastq.gz
+			gz: it.name.endsWith('.gz') || it.name.endsWith('.fastq')
 		}
 		| set { files }
 
 	// Only decompress .ora files, then mix with .gz files
 	files.ora
 		| decompress
-		| mix(files.other)
+		| mix(files.gz)
 		| flatten
 		| set { flat_fastq_list }
 
@@ -123,12 +124,14 @@ workflow {
 		| merge_run_bams
 		| filter_bams
 		| map { meta, bam_file, depth ->
-          		def more_meta = meta + [depth: depth.trim()]
+          		def depth_value = depth.trim().split('\n').last()
+          		def more_meta = meta + [depth: depth_value]
           		[more_meta, bam_file]
 		}
 		| set { filtered_bams_with_depth }
 
   	// Find minimum depth across all samples for scaling
+	// Create scaled bigwigs
   	filtered_bams_with_depth
       		| map { meta, bam_file -> meta.depth as Integer }
       		| min()
@@ -146,20 +149,19 @@ workflow {
 	| group_tuple 
 	| run_multimacs
 	*/
-/*
+
 	// run Tim's pipeline
 	filtered_bams_with_depth
 		| map { meta, bam_file ->
 			[meta.condition, meta, bam_file]
 		}
 		| groupTuple
-		| map { condition, meta, bam_files ->
-			[meta[0], bam_files]
-		| tuple_to_stdout
+		| map { condition, meta_list, bam_files ->
+			[meta_list[0], bam_files]
+		}
+		| create_multimacs_run
 		| collect
-		| create_multimacs_run 
-		//| run_multimacs | view
-*/
+		| run_multimacs
 }
 
 /*
@@ -189,7 +191,7 @@ process get_fastq {
 		path "**fastq*"
 	script:
 		"""
-		sh ${projectDir}/../shared_bin/get_files.sh "${input_file_source}" "${params.sample_table}"
+		sh ${projectDir}/../shared_bin/get_files.sh "${input_file_source}" "${params.sample_table}" "${launchDir}"
 		"""
 }
 
@@ -260,7 +262,7 @@ process adapter_trim {
 }
 
 /*
- * alignment with bowtie2, using mm10
+ * alignment with bowtie2
  */
 process bowtie_align {
 	input:
@@ -302,7 +304,9 @@ process merge_run_bams {
         if [ \$(echo $bam_files | wc -w) -gt 1 ]; then
             samtools merge ${meta.id}.merged.bam $bam_files
         else
-            ln -s $bam_files ${meta.id}.merged.bam
+            # Use readlink to resolve any symbolic links to actual file
+            actual_file=\$(readlink -f $bam_files)
+            ln -s "\$actual_file" ${meta.id}.merged.bam
         fi
         """
 }
@@ -335,9 +339,10 @@ process bam_to_bigwig {
 		"""
 		#!/bin/bash
 		
-		# load required modules
-		module load samtools
+		# load required modules - load deeptools first to avoid Python conflicts
+		module purge
 		module load deeptools
+		module load samtools
 
 		# create scale based on depth and minimum depth of all samples
 		scale=\$(echo "scale=5; $min_depth/${meta.depth}" | bc)
@@ -355,54 +360,40 @@ process bam_to_bigwig {
 /*
  * run filtered bam files through Tim's pipeline
  */
-process tuple_to_stdout {
+process create_multimacs_run {
+	maxForks 1 // Each condition is added sequentially
 	input: 
 		tuple val(meta), val(bam_files)
 	output: 
-		stdout
+		stdout emit: "done"
 	script:
 		"""
-		# Creates stdout in the format:
-			# --chip /file1, /file2
-			# --name condition1
-			# --chip /file3, /file4
-			# --name condition2
+		# Move run template to launchDir
+		if ! test -f ${launchDir}/output/multimacs_command.sh; then
+			mkdir -p ${launchDir}/output
+  			cp ${projectDir}/bin/multimacs_run_template.txt ${launchDir}/output/multimacs_command.sh
+		fi
 
-		echo --chip $bam_files
-		echo --name ${meta.condition}
-		"""
-}
-process create_multimacs_run {
-	publishDir 'multimacs_pipeline', mode: 'copy'
-	input:
-		stdin str
-	output:
-		//path "*sh"
-		stdout
-	script:
-		"""
-		#!/bin/bash
-		# Wrangle stdin into appropriate format:
-			# --chip /file1,/file2 \
-			# --name condition1 \
-			# --chip /file3,/file4 \
-			# --name condition2 \
 
-		chip_details=\$(cat - | tr "]" " " | tr "[" " " | tr "\n" " " | sed -e 's/, --/--/')
-		# sed 's/, /,/g; s/$/ \\/g'
-		#cat ${projectDir}/bin/multimacs_run_template.txt \
-		#	| sed -e "s~#details_here~$chip_details \\\~" > multimacs_command.sh
+		# Create text with the format:
+			# --chip /file1,/file2 --name condition1
+		clean_bams=\$(echo "${bam_files}" | tr -d '[]' | tr ', ' ',')
+		chip_details="multirep_macs2_pipeline.pl --chip \$clean_bams --name ${meta.condition}"
+		
+		# Place run-specific details in the multimacs script
+		sed -i "s~multirep_macs2_pipeline.pl~\$chip_details~" ${launchDir}/output/multimacs_command.sh
+		echo "done"
 		"""
 }
 process run_multimacs {
-	publishDir 'multimacs_pipeline', mode: 'copy'
+	//publishDir 'multimacs_pipeline', mode: 'move'
 	input:
-		path multimacs_command
+		val _
 	output:
 		path "*"
 	script:
 		"""
-		sh $multimacs_command
+		${launchDir}/output/multimacs_command.sh
 		"""
 }
 
