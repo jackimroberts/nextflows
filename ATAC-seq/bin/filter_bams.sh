@@ -40,13 +40,13 @@ which samtools
 which bedtools
 
 ## Sort BAM file by name for fixmate
-samtools sort -n -@ $(nproc) -m 4G $filepath -o $filepath.tmp
+samtools sort -n -@ $(nproc) $filepath -o $filepath.tmp
 
 ## Run fixmate to fill in mate coordinates and insert size fields
 samtools fixmate -m $filepath.tmp $filepath.fixmate.bam
 
 ## Sort by coordinate for markdup
-samtools sort -@ $(nproc) -m 4G $filepath.fixmate.bam -o $filepath.sorted.bam
+samtools sort -@ $(nproc) $filepath.fixmate.bam -o $filepath.sorted.bam
 
 ## Mark duplicates including optical duplicates using samtools
 samtools markdup -d 2500 -@ $(nproc) $filepath.sorted.bam $filepath.dedup.bam
