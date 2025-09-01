@@ -11,10 +11,11 @@
 ## ---------------------------
 ##
 ## Usage:
-##	./get_files.sh <input_sources> <sample_table>
+##	./get_files.sh <input_sources> <sample_table> <launch_dir>
 ##	
 ##	input_sources: Comma-separated list of sources (gnomex, CoreBrowser, UCSF:password, SRA)
 ##	sample_table: Path to sample table file (required for SRA downloads)
+##	launch_dir: Launch directory path (for locating core_links file)
 ##
 ## ---------------------------
 ##
@@ -29,6 +30,7 @@
 ## Handle command line arguments received
 input_sources="$1"
 sample_table="$2"
+launch_dir="$3"
 
 ## Load required modules
 module load parallel
@@ -48,23 +50,23 @@ for source in "${SOURCES[@]}"; do
 		FDT="java -jar /uufs/chpc.utah.edu/sys/pkg/fdt/0.9.20/fdt.jar"
 
 		# portion of command to execute
-		fdt_commands="${file_source##*.jar}"
+		fdt_commands="${source##*.jar}"
 		# execute with parallel streams
 		$FDT -P $(nproc) $fdt_commands
 
-	elif [[ "$source" == "CoreBrowser" ]] && [[ -f "core_links" ]]; then
+	elif [[ "$source" == "CoreBrowser" ]] && [[ -f "${launch_dir}/core_links" ]]; then
 		echo "=== download fastq files from Utah core browser via aria"
 
 		module load aria2
 
-		aria2c -i "core_links" -j $(nproc) -x 16
+		aria2c -i "${launch_dir}/core_links" -j $(nproc) -x 16
 
 	elif [[ "$source" == *":"* ]]; then
 		echo "=== download fastq files from UCSF core"
 	
 		# parse directory and password from format: directory:password
-		directory="${file_source%%:*}"
-		password="${file_source##*:}"
+		directory="${source%%:*}"
+		password="${source##*:}"
 
 		# use lftp for parallel transfer
 		lftp -u hiseq_user,"$password" sftp://fastq.ucsf.edu <<-EOF
