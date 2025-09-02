@@ -124,6 +124,8 @@ get_job_status() {
         local exit_code=$(cat "$task_dir/.exitcode" 2>/dev/null | tr -d '\n\r' | head -c 10)
         case "$exit_code" in
             0) echo "COMPLETED" ;;
+            127) echo "CMD_NOT_FOUND" ;;
+            137) echo "OOM_KILLED" ;;
             143) echo "USER_CANCELLED" ;;
             "") echo "COMPLETED" ;;
             *) echo "FAILED($exit_code)" ;;
@@ -191,8 +193,14 @@ for task_dir in "$work_pattern"/*/*; do
         # Get job status
         status=$(get_job_status "$task_dir" "$job_id")
         
-        # Get SLURM stats
-        if job_info=$(sacct -j "$job_id" --format=JobID,State,Elapsed,MaxRSS,CPUTimeRAW,TotalCPU --parsable2 --noheader 2>/dev/null | grep "^$job_id\.batch" | head -1); then
+        # Get SLURM stats - try batch step first, then main job
+        if job_info=$(sacct -j "$job_id" --format=JobID,State,Elapsed,MaxRSS,CPUTimeRAW,TotalCPU --parsable2 --noheader 2>/dev/null | grep -E "^$job_id\.(batch|0)$" | head -1); then
+            : # job_info already set
+        elif job_info=$(sacct -j "$job_id" --format=JobID,State,Elapsed,MaxRSS,CPUTimeRAW,TotalCPU --parsable2 --noheader 2>/dev/null | grep "^$job_id$" | head -1); then
+            : # fallback to main job record
+        fi
+        
+        if [[ -n "$job_info" ]]; then
             IFS='|' read -r _ slurm_state elapsed_sacct max_rss cpu_time_raw total_cpu <<< "$job_info"
             
             # Parse memory usage
@@ -200,7 +208,7 @@ for task_dir in "$work_pattern"/*/*; do
             
             # Calculate CPU efficiency
             if [[ -n "$total_cpu" && -n "$cpu_time_raw" && "$cpu_time_raw" -gt 0 ]]; then
-                local total_cpu_sec=$(parse_total_cpu "$total_cpu")
+                total_cpu_sec=$(parse_total_cpu "$total_cpu")
                 [[ "$total_cpu_sec" != "0" ]] && cpu_usage=$(calculate_cpu_efficiency "$total_cpu_sec" "$cpu_time_raw")
             fi
             

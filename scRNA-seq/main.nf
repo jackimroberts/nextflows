@@ -1,5 +1,10 @@
 #!/usr/bin/env nextflow
 
+// Include subworkflows and shared help
+include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
+include { WORKFLOW_COMPLETION } from '../subworkflows/workflow_completion.nf'
+include { getSharedHelp } from '../modules/shared_help'
+
 params.expected_cell_number = 10000
 params.fastq_source = true
 //params.fastq_source = "empty"
@@ -11,43 +16,13 @@ params.help = false
 if (params.help) {
         println """
         scRNA-seq nextflow pipeline
+${getSharedHelp()}
 
-        REQUIRED PARAMETERS:
-        --sample_table *txt
-                Must be in the launch folder
-                Table from gnomex contains "ID" and "Sample Name"
-                        gnomex > navigate to experiment > "Experiment Design" > "Download Sample Sheet" > 
-                        move to the launch folder
-                Can be manually generated with format "ID" "name" "condition"
-                        ID is the unique fastq file prefix
-
-        OPTIONAL PARAMETERS:
         --expected_cell_number integer
                 Used by CellRanger (default: 10000)
 
         --run_velocyto true/false
                 Run velocyto analysis (default: false)
-
-        --miniaturize true/false
-                Create mini fastq files of 250k reads for testing (default: false)
-
-        --fastq_source="source1,source2,..."
-                Specify input sources, can combine multiple with commas
-
-                ="java -jar ./fdt....gnomex..."
-                        Pulls fastq files from gnomex
-                        Get this command from:
-                        gnomex > navigate to experiment > "Files" > "Download Files" > 
-                        move fastq folder to the right > "FDT Command Line" > copy command
-
-                ="SSD/YYYYMMDD_run_identifier/email_subject_line:password"
-                        UCSF core emails a filepath and password after sequencing
-
-                ="SRA"
-                        Using sample table text file, downloads fastqs from SRA repository
-                        One SRA ID per line (SRR...), skips comments and empty lines
-
-                (default: searches for existing fastq files in launch directory)
 
         """
         exit 0
@@ -55,39 +30,15 @@ if (params.help) {
 
 workflow {
 
-	// wrangle sample sheet into specific format: id, name, condition
-	Channel.fromPath(params.sample_table)
-		| make_sample_table
-		| splitCsv(header:['sample_id','sample_name','condition'], sep:"\t") 
-		| map { row -> [row.sample_id, row.sample_name, row.condition] }
-		| set {sample_sheet}
-
-	// Find existing fastq files
-	Channel.fromPath("**fastq*", checkIfExists: false)
-		| filter { it.exists() && !it.toString().contains('/work/') } // exclude those in 'work'
-		| set { existing_files }
-
-	// Downloaded files if specified and combine with existing files
-	// Separate files by type and handle appropriately
-	(params.fastq_source != true ? Channel.value(params.fastq_source) | get_fastq : Channel.empty())
-		| mix(existing_files)
-		| branch {
-			ora: it.name.endsWith('.ora')
-			other: true // should catch *fastq and *fastq.gz
-		}
-		| set { files }
-
-	// Only decompress .ora files, then mix with .gz files
-	files.ora
-		| decompress
-		| mix(files.other)
-		| flatten
-		| set { flat_fastq_list }
-
-	// Downsize fastq for faster runs
-        if (params.miniaturize == true) {
-            flat_fastq_list | miniaturize | set { fastq_list }
-        } else { flat_fastq_list | set { fastq_list } }
+	// FASTQ preprocessing (sample table creation, download, decompress, miniaturize)
+	FASTQ_PREPROCESSING(
+		Channel.fromPath(params.sample_table),
+		params.fastq_source, 
+		params.miniaturize
+	)
+	
+	sample_sheet = FASTQ_PREPROCESSING.out.sample_sheet
+	fastq_list = FASTQ_PREPROCESSING.out.fastq_files
 	
 	// pair up fastq files by sample id
 	sample_sheet
@@ -115,127 +66,19 @@ workflow {
 		| collect 
 		| seurat_markdown
 		//| make_shiny
-
+	
+	// Trigger completion after all processes finish
+	seurat_markdown.out | WORKFLOW_COMPLETION
 }
 
-workflow.onComplete {
-    // Run resource usage analysis
-    def workDir = workflow.launchDir
-    def analyzerScript = "${projectDir}/../shared_bin/slurm_usage_analyzer.sh"
-    
-    println """
-    ==========================================================
-    Pipeline execution summary
-    ==========================================================
-    Completed at : ${workflow.complete}
-    Duration     : ${workflow.duration}
-    Success      : ${workflow.success}
-    Work directory: ${workDir}
-    ==========================================================
-    """
-    
-    if (file(analyzerScript).exists()) {
-        println "Running resource usage analysis..."
-        try {
-            def proc = ["bash", analyzerScript, workDir].execute()
-            proc.waitFor()
-            
-            if (proc.exitValue() == 0) {
-                println proc.text
-            } else {
-                println "Resource analysis completed with warnings:"
-                println proc.text
-                if (proc.err.text) {
-                    println "Error output:"
-                    println proc.err.text
-                }
-            }
-        } catch (Exception e) {
-            println "Failed to run resource analysis: ${e.message}"
-        }
-    } else {
-        println "Resource analyzer script not found at: ${analyzerScript}"
-        println "Skipping resource usage analysis."
-    }
-    
-    println "=========================================================="
-}
-
-/*
- * generate table with specific format:
- * sampleID sampleName expCondition
- */
-process make_sample_table {
-	input:
-		path input_sample_table
-	output:
-		path "sample_table.tsv"
-	script:
-		"""
-		module load R
-		Rscript ${projectDir}/../shared_bin/make_sample_table.R $input_sample_table
-		"""
-}
-
-/*
- * Pull fastq files
- */
-process get_fastq {
-	input:
-		val input_file_source
-	output:
-		path "**fastq*"
-	script:
-		"""
-		sh ${projectDir}/../shared_bin/get_files.sh "${input_file_source}"
-		"""
-}
-
-/*
- * decompress ora files to *gz format
- */
-process decompress {
-	input:
-		path fastq_file
-	output:
-		path "*fastq.gz"
-	script:
-
-		"""
-		if [[ "${fastq_file}" == *".ora" ]]; then
-			# module load oradecompression/2.7.0
-			/uufs/chpc.utah.edu/common/home/hcibcore/atlatl/app/orad/2.7.0/orad "${fastq_file}" --rm
-		fi
-		"""
-}
-
-/*
- * Make mini fastq for testing
- */
-process miniaturize {
-	stageInMode 'copy'
-	input:
-		path fastq_file
-	output:
-		path "${fastq_file}"
-	script:
-		"""
-          	if [[ "${fastq_file}" == *.gz ]]; then
-              		zcat $fastq_file | head -n 1000000 | gzip > temp_${fastq_file}
-          	else
-              		head -n 1000000 $fastq_file > temp_${fastq_file}
-          	fi
-		mv temp_${fastq_file} ${fastq_file}
-		"""
-}
 
 /*
  * run cellRanger
  */
 process run_cellranger {
-	publishDir 'output', pattern: '**/web_summary.html', mode: 'copy', overwrite: true
-	publishDir 'output', pattern: '**/filtered_feature_bc_matrix.h5', mode: 'copy', overwrite: true
-	publishDir 'output', pattern: '**/metrics_summary.csv', mode: 'copy', overwrite: true
+	publishDir 'output', pattern: '**web_summary.html', mode: 'copy', overwrite: true
+	publishDir 'output', pattern: '**filtered_feature_bc_matrix.h5', mode: 'copy', overwrite: true
+	publishDir 'output', pattern: '**metrics_summary.csv', mode: 'copy', overwrite: true
 	input:
 		tuple val(meta), path(fastqs, stageAs: 'fastq_folder/*')
 	output:
