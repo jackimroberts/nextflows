@@ -118,6 +118,49 @@ workflow {
 
 }
 
+workflow.onComplete {
+    // Run resource usage analysis
+    def workDir = workflow.launchDir
+    def analyzerScript = "${projectDir}/../shared_bin/slurm_usage_analyzer.sh"
+    
+    println """
+    ==========================================================
+    Pipeline execution summary
+    ==========================================================
+    Completed at : ${workflow.complete}
+    Duration     : ${workflow.duration}
+    Success      : ${workflow.success}
+    Work directory: ${workDir}
+    ==========================================================
+    """
+    
+    if (file(analyzerScript).exists()) {
+        println "Running resource usage analysis..."
+        try {
+            def proc = ["bash", analyzerScript, workDir].execute()
+            proc.waitFor()
+            
+            if (proc.exitValue() == 0) {
+                println proc.text
+            } else {
+                println "Resource analysis completed with warnings:"
+                println proc.text
+                if (proc.err.text) {
+                    println "Error output:"
+                    println proc.err.text
+                }
+            }
+        } catch (Exception e) {
+            println "Failed to run resource analysis: ${e.message}"
+        }
+    } else {
+        println "Resource analyzer script not found at: ${analyzerScript}"
+        println "Skipping resource usage analysis."
+    }
+    
+    println "=========================================================="
+}
+
 /*
  * generate table with specific format:
  * sampleID sampleName expCondition
@@ -199,7 +242,7 @@ process run_cellranger {
 		path "${meta.name}"
 	script:
 		"""
-		module load cellranger
+		module load cellranger/8.0.1
 		which cellranger
 
 		cellranger count --id=${meta.name} \
@@ -208,9 +251,6 @@ process run_cellranger {
 			--expect-cells=${params.expected_cell_number} \
 			--create-bam=${params.run_velocyto} \
 			--nosecondary
-
-		#change id to name
-		mv ${meta.id} ${meta.name}
 		"""
 }
 		
@@ -250,15 +290,12 @@ process run_velocyto {
  * can edit .Rmd in output folder and run with -resume to use edited parameters
  */
 process seurat_markdown {
-	//publishDir 'output', mode: 'copy'
 	input:
 		val cellranger_out_paths
 	output:
-		tuple path('**.qs'),path('**markers.txt')
+		stdout
 	script:
 		"""
-  		mkdir -p ${launchDir}/output
-
 		if ! test -f ${launchDir}/output/initial_analysis.Rmd; then
   			cp ${projectDir}/bin/initial_analysis_template.Rmd ${launchDir}/output/initial_analysis.Rmd
 		fi
