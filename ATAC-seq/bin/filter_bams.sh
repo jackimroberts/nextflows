@@ -75,6 +75,3 @@ samtools index $filepath.filtered.bam
 
 ## Clean up intermediate files
 rm -f $filepath.tmp $filepath.fixmate.bam $filepath.sorted.bam
-
-## Calculate size for eventual scaling
-echo $(samtools view -f 64 -c $filepath.filtered.bam) | tr -d '\n'
