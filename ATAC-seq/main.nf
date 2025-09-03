@@ -2,8 +2,8 @@
 
 // Include subworkflows and shared help
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
-include { WORKFLOW_COMPLETION } from '../subworkflows/workflow_completion.nf'
 include { getSharedHelp } from '../modules/shared_help'
+include { handleWorkflowCompletion } from '../shared_bin/workflow_completion_handler.nf'
 
 params.miniaturize = false
 params.fastq_source = true
@@ -105,11 +105,10 @@ workflow {
 		| create_multimacs_run
 		| collect
 		| run_multimacs
-	
-	// Trigger completion after all processes finish
-	run_multimacs.out
-		| mix(bam_to_bigwig.out)
-		| WORKFLOW_COMPLETION
+}
+
+workflow.onComplete {
+    handleWorkflowCompletion()
 }
 
 

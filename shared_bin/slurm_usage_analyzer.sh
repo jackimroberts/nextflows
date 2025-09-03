@@ -177,8 +177,8 @@ for task_dir in "$work_pattern"/*/*; do
     fi
     
     # Parse resource requests
-    cpus_req=$(grep -o '#SBATCH.*--cpus-per-task[= ]*[0-9]\+\|#SBATCH.*-c *[0-9]\+' "$task_dir/.command.run" 2>/dev/null | grep -o '[0-9]\+' || echo "1")
-    mem_req=$(grep -o '#SBATCH.*--mem[= ]*[0-9]\+[KMGT]\?' "$task_dir/.command.run" 2>/dev/null | grep -o '[0-9]\+[KMGT]\?' || echo "1G")
+    cpus_req=$(grep -o '#SBATCH.*--cpus-per-task[= ]*[0-9]\+\|#SBATCH.*-c[[:space:]]*[0-9]\+' "$task_dir/.command.run" 2>/dev/null | grep -o '[0-9]\+$' | head -1 || echo "1")
+    mem_req=$(grep -o '#SBATCH.*--mem[[:space:]]*[0-9]\+[KMGT]\?' "$task_dir/.command.run" 2>/dev/null | grep -o '[0-9]\+[KMGT]\?$' | head -1 || echo "1G")
     mem_req_mb=$(convert_to_mb "$mem_req")
     mem_req_gb=$(printf "%.1f" "$(echo "$mem_req_mb / 1024" | bc -l)")
     
@@ -193,14 +193,8 @@ for task_dir in "$work_pattern"/*/*; do
         # Get job status
         status=$(get_job_status "$task_dir" "$job_id")
         
-        # Get SLURM stats - try batch step first, then main job
-        if job_info=$(sacct -j "$job_id" --format=JobID,State,Elapsed,MaxRSS,CPUTimeRAW,TotalCPU --parsable2 --noheader 2>/dev/null | grep -E "^$job_id\.(batch|0)$" | head -1); then
-            : # job_info already set
-        elif job_info=$(sacct -j "$job_id" --format=JobID,State,Elapsed,MaxRSS,CPUTimeRAW,TotalCPU --parsable2 --noheader 2>/dev/null | grep "^$job_id$" | head -1); then
-            : # fallback to main job record
-        fi
-        
-        if [[ -n "$job_info" ]]; then
+        # Get SLURM stats from batch step
+        if job_info=$(sacct -j "$job_id" --format=JobID,State,Elapsed,MaxRSS,CPUTimeRAW,TotalCPU --parsable2 --noheader 2>/dev/null | grep "^$job_id\.batch" | head -1); then
             IFS='|' read -r _ slurm_state elapsed_sacct max_rss cpu_time_raw total_cpu <<< "$job_info"
             
             # Parse memory usage

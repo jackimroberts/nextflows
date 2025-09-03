@@ -2,8 +2,8 @@
 
 // Include subworkflows and shared help
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
-include { WORKFLOW_COMPLETION } from '../subworkflows/workflow_completion.nf'
 include { getSharedHelp } from '../modules/shared_help'
+include { handleWorkflowCompletion } from '../shared_bin/workflow_completion_handler.nf'
 
 params.expected_cell_number = 10000
 params.fastq_source = true
@@ -66,9 +66,10 @@ workflow {
 		| collect 
 		| seurat_markdown
 		//| make_shiny
-	
-	// Trigger completion after all processes finish
-	seurat_markdown.out | WORKFLOW_COMPLETION
+}
+
+workflow.onComplete {
+    handleWorkflowCompletion()
 }
 
 
