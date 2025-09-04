@@ -44,7 +44,7 @@ for source in "${SOURCES[@]}"; do
 
 
 	if [[ "$source" == *"gnomex"* ]]; then
-		echo "=== download fastq files from GNomEx, using FDT command line"
+		echo "=== downloading fastq files from GNomEx, using FDT command line"
 
 		# true location of fdt app with parallel optimization
 		FDT="java -jar /uufs/chpc.utah.edu/sys/pkg/fdt/0.9.20/fdt.jar"
@@ -55,14 +55,14 @@ for source in "${SOURCES[@]}"; do
 		$FDT -P $(nproc) $fdt_commands
 
 	elif [[ "$source" == "CoreBrowser" ]] && [[ -f "${launch_dir}/core_links" ]]; then
-		echo "=== download fastq files from Utah core browser via aria"
+		echo "=== downloading fastq files from Utah core browser via aria"
 
 		module load aria2
 
 		aria2c -i "${launch_dir}/core_links" -j $(nproc) -x 16
 
 	elif [[ "$source" == *":"* ]]; then
-		echo "=== download fastq files from UCSF core"
+		echo "=== downloading fastq files from UCSF core"
 	
 		# parse directory and password from format: directory:password
 		directory="${source%%:*}"
@@ -78,7 +78,7 @@ for source in "${SOURCES[@]}"; do
 		EOF
 
 	elif [[ "$source" == "SRA" ]] && [[ -f "$sample_table" ]]; then
-		echo "=== download fastq files from SRA"
+		echo "=== downloading fastq files from SRA"
 	
 		# load SRA toolkit
 		module load sra-toolkit
@@ -98,3 +98,4 @@ done
 ## Generate checksums for all downloaded files
 echo "=== Generating checksums"
 md5sum **fastq* > md5_downloads.txt 2>/dev/null || echo "No fastq files to checksum"
+cat md5_downloads.txt

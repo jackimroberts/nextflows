@@ -3,7 +3,6 @@
 // Include subworkflows and shared help
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
 include { getSharedHelp } from '../modules/shared_help'
-include { handleWorkflowCompletion } from '../shared_bin/workflow_completion_handler.nf'
 
 params.expected_cell_number = 10000
 params.fastq_source = true
@@ -69,7 +68,16 @@ workflow {
 }
 
 workflow.onComplete {
-    handleWorkflowCompletion()
+	// Runs on success, cancel or fail
+
+	def outputDir = new File("${launchDir}/output")
+	if (!outputDir.exists()) outputDir.mkdirs()
+	
+	// Run SLURM usage analysis and save to file
+	["bash", "${projectDir}/../shared_bin/slurm_usage_analyzer.sh", launchDir, outputDir].execute().waitFor()
+	
+	// Run log collection (saves to file directly)
+	["bash", "${projectDir}/../shared_bin/collect_task_logs.sh", launchDir, outputDir].execute().waitFor()
 }
 
 
@@ -87,14 +95,23 @@ process run_cellranger {
 	script:
 		"""
 		module load cellranger/8.0.1
-		which cellranger
+		
+		echo "=== PROCESS_RUN_CELLRANGER ==="
+		echo "Strategy: Single-cell RNA-seq quantification and analysis"
+		echo "cellranger \$(cellranger --version)"
+		echo "Expected cells: ${params.expected_cell_number}"
+		echo "Transcriptome: ${params.cellRanger_transcriptome}"
+		echo "=== PROCESS_RUN_CELLRANGER ==="
 
-		cellranger count --id=${meta.name} \
-			--fastqs=fastq_folder \
-			--transcriptome=${params.cellRanger_transcriptome} \
-			--expect-cells=${params.expected_cell_number} \
-			--create-bam=${params.run_velocyto} \
-			--nosecondary
+		echo "== Running cellranger for ${meta.name}"
+		cellranger count --id=${meta.name} \\
+			--fastqs=fastq_folder \\
+			--transcriptome=${params.cellRanger_transcriptome} \\
+			--expect-cells=${params.expected_cell_number} \\
+			--create-bam=${params.run_velocyto} \\
+			--nosecondary > cellranger.log 2>&1
+		
+		tail -4 cellranger.log
 		"""
 }
 		
@@ -114,16 +131,32 @@ process run_velocyto {
 		module load velocyto
 		module load samtools
 		
-		which velocyto
-		which samtools
+		echo "=== PROCESS_RUN_VELOCYTO ==="
+		echo "Strategy: Generate spliced/unspliced count matrices for RNA velocity"
+		echo "velocyto \$(velocyto --version 2>&1)"
+		echo "samtools \$(samtools --version)"
+		echo "=== PROCESS_RUN_VELOCYTO ==="
+
+		echo "== Running velocyto for ${cellRanger_out}"
 	
 		if ! test -f ${launchDir}/work/genes.gtf; then
+			echo "== Requires *gtf. Decompressing *gtf.gz into launchDir/work"
 			cp ${params.cellRanger_transcriptome}/genes/genes.gtf.gz ${launchDir}/work
 			gunzip ${launchDir}/work/genes.gtf.gz
 		fi
 
-		if ! test -f $cellRanger_out/velocyto/*loom; then
+		if ! test -f $cellRanger_out/velocyto/*.loom; then
   			velocyto run10x -@ `nproc` $cellRanger_out ${launchDir}/work/genes.gtf
+			
+			if ls $cellRanger_out/velocyto/*.loom 1> /dev/null 2>&1; then
+				file_size=\$(du -h $cellRanger_out/velocyto/*.loom | cut -f1)
+				loom_file=\$(basename $cellRanger_out/velocyto/*.loom)
+				echo "Created \$loom_file: \$file_size"
+			else
+				echo "== No loom file created"
+			fi
+		else
+			echo "== loom file already exists"
 		fi
 		"""
 }
@@ -140,6 +173,10 @@ process seurat_markdown {
 		stdout
 	script:
 		"""
+		echo "=== PROCESS_SEURAT_MARKDOWN ==="
+		echo "Strategy: Generate Seurat analysis report"
+		echo "=== PROCESS_SEURAT_MARKDOWN ==="
+		
 		if ! test -f ${launchDir}/output/initial_analysis.Rmd; then
   			cp ${projectDir}/bin/initial_analysis_template.Rmd ${launchDir}/output/initial_analysis.Rmd
 		fi
@@ -161,6 +198,10 @@ process make_shiny {
 		stdout
 	script:
 		"""
+		echo "=== PROCESS_MAKE_SHINY ==="
+		echo "Strategy: Create interactive Shiny application"
+		echo "=== PROCESS_MAKE_SHINY ==="
+		
 		if ! test -f ${launchDir}/output/app.R; then
   			cp ${projectDir}/bin/Rshiny_app_template.txt ${launchDir}/output/app.R
 		fi

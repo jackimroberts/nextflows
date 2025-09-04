@@ -53,3 +53,5 @@ if(all(c("ID","Sample Name") %in% colnames(input_table))){
 ## write table
 
 write_tsv(input_table,"sample_table.tsv",col_names=FALSE)
+
+print(input_table)

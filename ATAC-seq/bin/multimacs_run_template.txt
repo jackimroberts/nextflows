@@ -3,10 +3,6 @@
 # Note: blacklist filtering is handled in filter_bams process
 NCPU=`nproc`
 
-module use /uufs/chpc.utah.edu/common/home/hcibcore/Modules/modulefiles
-
-module load multirepchipseq parallel
-
 multirep_macs2_pipeline.pl \
 --nodedup \
 --independent \

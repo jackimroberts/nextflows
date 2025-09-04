@@ -3,15 +3,19 @@
 # Nextflow Resource Usage Analyzer
 # Compares requested vs actual resource usage for SLURM jobs
 
-WORK_DIR="$1"
-if [[ -z "$WORK_DIR" ]]; then
-    echo "Usage: $0 <nextflow_work_directory>"
-    echo "Example: $0 /scratch/general/vast/u0948419/sarahW/mcherry/work"
+LAUNCH_DIR="$1"
+if [[ -z "$LAUNCH_DIR" ]]; then
+    echo "Usage: $0 <nextflow_launch_directory> <output_directory>"
     exit 1
 fi
 
+OUT_DIR="$2"
+if [[ -z "$OUT_DIR" ]]; then
+    OUT_DIR=$LAUNCH_DIR
+fi
+
 echo "=== Nextflow Resource Usage Analysis ==="
-echo "Work directory: $WORK_DIR"
+echo "Launch directory: $LAUNCH_DIR"
 echo "Analysis date: $(date)"
 echo
 
@@ -40,7 +44,7 @@ parse_memory_usage() {
     local mem_req_mb="$2"
     
     if [[ -z "$max_rss" || -z "$mem_req_mb" || "$mem_req_mb" -le 0 ]]; then
-        echo "unknown"
+        echo "?"
         return
     fi
     
@@ -57,7 +61,7 @@ parse_memory_usage() {
         local mem_efficiency=$(echo "scale=1; $mem_used_mb * 100 / $mem_req_mb" | bc -l)
         printf "%.1f%%" "$mem_efficiency"
     else
-        echo "unknown"
+        echo "?"
     fi
 }
 
@@ -105,14 +109,14 @@ format_duration() {
     local suffix="$2"
     
     if [[ -z "$seconds" || "$seconds" -le 0 ]]; then
-        echo "unknown"
+        echo "?"
         return
     fi
     
     local hours=$((seconds / 3600))
     local mins=$(((seconds % 3600) / 60))
     local secs=$((seconds % 60))
-    printf "%d:%02d:%02d%s" $hours $mins $secs "${suffix:-}"
+    printf "%02d:%02d:%02d%s" $hours $mins $secs "${suffix:-}"
 }
 
 # Get job status from exit code
@@ -126,7 +130,7 @@ get_job_status() {
             0) echo "COMPLETED" ;;
             127) echo "CMD_NOT_FOUND" ;;
             137) echo "OOM_KILLED" ;;
-            143) echo "USER_CANCELLED" ;;
+            143) echo "USER_CANCEL" ;;
             "") echo "COMPLETED" ;;
             *) echo "FAILED($exit_code)" ;;
         esac
@@ -138,14 +142,14 @@ get_job_status() {
 }
 
 # Header
-printf "%-20s %-12s %-12s %-8s %-12s %-12s %-12s %-15s %-10s %-15s\n" \
-    "Process" "Nextflow_ID" "SLURM_JobID" "CPUs_Req" "Mem_Req(GB)" "%_Mem_Use" "%_CPU_Use" "Time_Use" "Queue_Wait" "Status"
-echo "$(printf '%*s' 135 '' | tr ' ' '-')"
+printf "%-20s %-6s %-8s %-4s %-7s %-10s %-10s %-10s %-10s %-12s\n" \
+    "Process" "Nf_ID" "SLURM_ID" "CPUs" "Mem(GB)" "%_Mem_Use" "%_CPU_Use" "Time_Use" "Queue_Wait" "Status"
+echo "$(printf '%*s' 106 '' | tr ' ' '-')"
 
 # Find work directory
-work_pattern="$WORK_DIR"
-[[ -d "$WORK_DIR/work" ]] && work_pattern="$WORK_DIR/work"
-[[ -d "$WORK_DIR/../../work" ]] && work_pattern="$WORK_DIR/../../work"
+work_pattern="$LAUNCH_DIR"
+[[ -d "$LAUNCH_DIR/work" ]] && work_pattern="$LAUNCH_DIR/work"
+[[ -d "$LAUNCH_DIR/../../work" ]] && work_pattern="$LAUNCH_DIR/../../work"
 
 # Collect job data
 declare -a job_data=()
@@ -158,12 +162,14 @@ for task_dir in "$work_pattern"/*/*; do
     
     # Extract basic info
     dir_path=$(echo "$task_dir" | sed 's|.*/work/||')
-    nextflow_id="${dir_path:0:9}"
+    nextflow_id="${dir_path:0:6}"
     
     # Get process name
     process_name="$nextflow_id"
     if process=$(grep -o "### name: '[^']*'" "$task_dir/.command.run" 2>/dev/null | sed "s/### name: '//" | sed "s/'//"); then
         [[ -n "$process" ]] && process_name="$process"
+        # Remove subworkflow prefix (everything before and including the colon)
+        process_name="${process_name##*:}"
     fi
     
     # Check if SLURM job
@@ -183,11 +189,11 @@ for task_dir in "$work_pattern"/*/*; do
     mem_req_gb=$(printf "%.1f" "$(echo "$mem_req_mb / 1024" | bc -l)")
     
     # Initialize defaults
-    mem_usage="unknown"
-    cpu_usage="unknown"
-    elapsed="unknown"
-    queue_wait="unknown"
-    status="unknown"
+    mem_usage="?"
+    cpu_usage="?"
+    elapsed="?"
+    queue_wait="?"
+    status="?"
     
     if [[ "$job_id" =~ ^[0-9]+$ ]]; then
         # Get job status
@@ -246,8 +252,8 @@ for task_dir in "$work_pattern"/*/*; do
                 [[ -n "$end_time" ]] && elapsed=$(format_duration $((end_time - submit_time)))
             fi
         else
-            status="CANCELLED_QUEUED"
-            job_id="CANCELLED"
+            status="CANCEL_QUEUED"
+            job_id="none"
             # Calculate time spent in queue before cancellation
             if [[ -f "$task_dir/.command.log" ]]; then
                 cancel_time=$(stat -c %Y "$task_dir/.command.log" 2>/dev/null)
@@ -264,9 +270,10 @@ done
 
 # Sort by submit_time and display (skip submit_time in output)
 IFS=$'\n' sorted_data=($(sort -t'|' -k1,1n <<< "${job_data[*]}"))
+{
 for line in "${sorted_data[@]}"; do
     IFS='|' read -r submit_time process nextflow_id job_id cpus_req mem_req_gb mem_usage cpu_usage elapsed queue_wait status <<< "$line"
-    printf "%-20s %-12s %-12s %-8s %-12s %-12s %-12s %-15s %-10s %-15s\n" \
+    printf "%-20s %-6s %-8s %-4s %-7s %-10s %-10s %-10s %-10s %-12s\n" \
         "$process" "$nextflow_id" "$job_id" "$cpus_req" "$mem_req_gb" "$mem_usage" "$cpu_usage" "$elapsed" "$queue_wait" "$status"
 done
 
@@ -279,3 +286,4 @@ echo "- %_CPU_Use: CPU efficiency (actual CPU time/allocated CPU time * 100)"
 echo "- Time_Use: Actual runtime (* indicates job still running)"
 echo "- Queue_Wait: Time spent waiting in SLURM queue (* indicates still queued)"
 echo "- Status: Job completion status"
+} > "$OUT_DIR/slurm_analysis.txt"
