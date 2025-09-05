@@ -14,6 +14,8 @@ if [[ -z "$OUT_DIR" ]]; then
     OUT_DIR=$LAUNCH_DIR
 fi
 
+mkdir -p $OUT_DIR
+
 echo "=== Nextflow Resource Usage Analysis ==="
 echo "Launch directory: $LAUNCH_DIR"
 echo "Analysis date: $(date)"
@@ -141,10 +143,6 @@ get_job_status() {
     fi
 }
 
-# Header
-printf "%-20s %-6s %-8s %-4s %-7s %-10s %-10s %-10s %-10s %-12s\n" \
-    "Process" "Nf_ID" "SLURM_ID" "CPUs" "Mem(GB)" "%_Mem_Use" "%_CPU_Use" "Time_Use" "Queue_Wait" "Status"
-echo "$(printf '%*s' 106 '' | tr ' ' '-')"
 
 # Find work directory
 work_pattern="$LAUNCH_DIR"
@@ -270,7 +268,13 @@ done
 
 # Sort by submit_time and display (skip submit_time in output)
 IFS=$'\n' sorted_data=($(sort -t'|' -k1,1n <<< "${job_data[*]}"))
+
 {
+# Column headers
+printf "%-20s %-6s %-8s %-4s %-7s %-10s %-10s %-10s %-10s %-12s\n" \
+    "Process" "Nf_ID" "SLURM_ID" "CPUs" "Mem(GB)" "%_Mem_Use" "%_CPU_Use" "Time_Use" "Queue_Wait" "Status"
+echo "$(printf '%*s' 106 '' | tr ' ' '-')"
+
 for line in "${sorted_data[@]}"; do
     IFS='|' read -r submit_time process nextflow_id job_id cpus_req mem_req_gb mem_usage cpu_usage elapsed queue_wait status <<< "$line"
     printf "%-20s %-6s %-8s %-4s %-7s %-10s %-10s %-10s %-10s %-12s\n" \

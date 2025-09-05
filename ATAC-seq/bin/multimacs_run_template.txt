@@ -15,5 +15,5 @@ multirep_macs2_pipeline.pl \
 --peaksize 150 \
 --peakgap 75 \
 --chrskip 'chrM' \
+--cpu $NCPU
 #--blacklist $BLACK \
---cpu $(nproc)

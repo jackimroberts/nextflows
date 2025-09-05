@@ -2,6 +2,7 @@
 
 // Include subworkflows and shared help
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
+include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
 include { getSharedHelp } from '../modules/shared_help'
 
 params.expected_cell_number = 10000
@@ -69,15 +70,7 @@ workflow {
 
 workflow.onComplete {
 	// Runs on success, cancel or fail
-
-	def outputDir = new File("${launchDir}/output")
-	if (!outputDir.exists()) outputDir.mkdirs()
-	
-	// Run SLURM usage analysis and save to file
-	["bash", "${projectDir}/../shared_bin/slurm_usage_analyzer.sh", launchDir, outputDir].execute().waitFor()
-	
-	// Run log collection (saves to file directly)
-	["bash", "${projectDir}/../shared_bin/collect_task_logs.sh", launchDir, outputDir].execute().waitFor()
+	WorkflowCompletion()
 }
 
 
@@ -96,12 +89,14 @@ process run_cellranger {
 		"""
 		module load cellranger/8.0.1
 		
-		echo "=== PROCESS_RUN_CELLRANGER ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== RUN_CELLRANGER ======"
 		echo "Strategy: Single-cell RNA-seq quantification and analysis"
 		echo "cellranger \$(cellranger --version)"
 		echo "Expected cells: ${params.expected_cell_number}"
 		echo "Transcriptome: ${params.cellRanger_transcriptome}"
-		echo "=== PROCESS_RUN_CELLRANGER ==="
+		echo "====== RUN_CELLRANGER ======"
+		echo "====== PROCESS_SUMMARY"
 
 		echo "== Running cellranger for ${meta.name}"
 		cellranger count --id=${meta.name} \\
@@ -131,11 +126,13 @@ process run_velocyto {
 		module load velocyto
 		module load samtools
 		
-		echo "=== PROCESS_RUN_VELOCYTO ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== RUN_VELOCYTO ======"
 		echo "Strategy: Generate spliced/unspliced count matrices for RNA velocity"
 		echo "velocyto \$(velocyto --version 2>&1)"
-		echo "samtools \$(samtools --version)"
-		echo "=== PROCESS_RUN_VELOCYTO ==="
+		echo "\$(samtools --version | head -1)"
+		echo "====== RUN_VELOCYTO ======"
+		echo "====== PROCESS_SUMMARY"
 
 		echo "== Running velocyto for ${cellRanger_out}"
 	
@@ -173,9 +170,11 @@ process seurat_markdown {
 		stdout
 	script:
 		"""
-		echo "=== PROCESS_SEURAT_MARKDOWN ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== SEURAT_MARKDOWN ======"
 		echo "Strategy: Generate Seurat analysis report"
-		echo "=== PROCESS_SEURAT_MARKDOWN ==="
+		echo "====== SEURAT_MARKDOWN ======"
+		echo "====== PROCESS_SUMMARY"
 		
 		if ! test -f ${launchDir}/output/initial_analysis.Rmd; then
   			cp ${projectDir}/bin/initial_analysis_template.Rmd ${launchDir}/output/initial_analysis.Rmd
@@ -198,9 +197,11 @@ process make_shiny {
 		stdout
 	script:
 		"""
-		echo "=== PROCESS_MAKE_SHINY ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== MAKE_SHINY ======"
 		echo "Strategy: Create interactive Shiny application"
-		echo "=== PROCESS_MAKE_SHINY ==="
+		echo "====== MAKE_SHINY ======"
+		echo "====== PROCESS_SUMMARY"
 		
 		if ! test -f ${launchDir}/output/app.R; then
   			cp ${projectDir}/bin/Rshiny_app_template.txt ${launchDir}/output/app.R

@@ -2,6 +2,7 @@
 
 // Include subworkflows and shared help
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
+include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
 include { getSharedHelp } from '../modules/shared_help'
 
 params.miniaturize = false
@@ -59,13 +60,24 @@ workflow {
 			[meta.id, meta, bam_file]
 		}
 		| groupTuple
-	// Merge bam files, filter, and calculate depth
 		| map { sample_id, meta_list, bam_files ->
 			[meta_list[0], bam_files]
 	 	}
+	// Separate samples with single or multiple sequencing runs
+		| branch {
+                        multiple: it[1].size() > 1
+                        single: it[1].size() == 1
+                }
+                | set { bam_branches }
+
+        // Only merge files from multiple runs
+	// Avoids unnecessary SLURM jobs
+        bam_branches.multiple 
 		| merge_run_bams
-		| filter_bams
-		| set { filtered_bams}
+        // Combine both streams back together
+                | mix( bam_branches.single )
+                | filter_bams
+		| set { filtered_bams }
 
 	// Call peaks from each sample
 	filtered_bams
@@ -85,7 +97,7 @@ workflow {
 	filtered_bams
 		| measure_depth
 		| map { meta, bam_file, depth ->
-          		def depth_value = depth.trim() as Integer
+          		def depth_value = depth.trim().split('\n').last() as Integer
    
           		[meta + [depth: depth_value], bam_file]
 		}
@@ -99,7 +111,7 @@ workflow {
       		| bam_to_bigwig
 	
 	// run Tim's pipeline
-	filtered_bams_with_depth
+	filtered_bams
 		| map { meta, bam_file ->
 			[meta.condition, meta, bam_file]
 		}
@@ -114,14 +126,7 @@ workflow {
 
 workflow.onComplete {
 	// Runs on success, cancel or fail
-	def outputDir = new File("${launchDir}/output")
-	if (!outputDir.exists()) outputDir.mkdirs()
-	
-	// Run SLURM usage analysis and save to file
-	["bash", "${projectDir}/../shared_bin/slurm_usage_analyzer.sh", launchDir, outputDir].execute().waitFor()
-	
-	// Run log collection (saves to file directly)
-	["bash", "${projectDir}/../shared_bin/collect_task_logs.sh", launchDir, outputDir].execute().waitFor()
+	WorkflowCompletion()
 }
 
 
@@ -143,12 +148,16 @@ process adapter_trim {
 		# load cutadapt module
 		module load cutadapt
 
-		echo "=== PROCESS_ADAPTER_TRIM ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== ADAPTER_TRIM ======"
 		echo "Strategy: Remove adapters and low quality bases from reads"
 		echo "trimmed with cutadapt \$(cutadapt --version)"
 		echo "-O 1 --nextseq-trim=20 -m 1"
 		echo "adapters forward: \$adaptf and reverse: \$adaptr"
-		echo "=== PROCESS_ADAPTER_TRIM ==="
+		echo "====== ADAPTER_TRIM ======"
+		echo "====== PROCESS_SUMMARY"
+
+		echo "=== trimming $fastqs"
 
 		cutadapt -O 1 --nextseq-trim=20 -m 1 -a \$adaptf -A \$adaptr \\
 			-o ${meta.id}_${meta.run}.1.fq -p ${meta.id}_${meta.run}.2.fq \\
@@ -157,16 +166,11 @@ process adapter_trim {
 		# Extract key stats from cutadapt log
 		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' cutadapt.log | head -n -1
 		
-		echo "=== Input Files ==="
+		echo "=== Input Files"
 		# Count reads in input files (assuming gzipped)
 		read_count=\$(( \$(gunzip -c ${fastqs[0]} | wc -l) / 4 ))
-		echo "${fastqs[0]}: \$read_count reads"
+		echo "\$read_count reads after trimming"
 		
-		echo "=== Output Files ==="
-		# Count reads in output file
-		read_count=\$(( \$(wc -l < "${meta.id}_${meta.run}.1.fq") / 4 ))
-		echo "${meta.id}_${meta.run}.1.fq: \$read_count reads"
-
 		"""
 }
 
@@ -188,26 +192,29 @@ process bowtie_align {
 		module load bowtie2
 		module load samtools
 
-		echo "=== PROCESS_BOWTIE_ALIGN ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== BOWTIE_ALIGN ======"
 		echo "Strategy: Align paired-end reads with bowtie2"
-		echo "bowtie2 \$(bowtie2 --version)"
-		echo "samtools \$(samtools --version)"
+		echo "bowtie2 version \$(bowtie2 --version | head -1 | awk '{print \$NF}')"
+		echo "\$(samtools --version | head -1)"
 		echo "Parameters: --local --very-sensitive --no-mixed --no-discordant"
 		echo "Reference: ${params.genome_index}"
-		echo "=== PROCESS_BOWTIE_ALIGN ==="
+		echo "====== BOWTIE_ALIGN ======"
+		echo "====== PROCESS_SUMMARY"
 
+		echo "aligning $r1/.2.fq" 
 		bowtie2 --local --very-sensitive --no-mixed --no-discordant -p \$(nproc) \\
 			-x ${params.genome_index} -1 ${r1} -2 ${r2} \\
 			2> bowtie.log | \\
 			samtools view -bS -o ${meta.id}_${meta.run}.raw.bam
 		
 		# Extract key stats from bowtie stderr (last 6 lines)
-		echo "=== Alignment Results ==="
+		echo "=== Alignment Results"
 		tail -6 bowtie.log
 		
-		echo "=== Output Files ==="
+		echo "=== Output Files"
 		bam_count=\$(samtools view -c ${meta.id}_${meta.run}.raw.bam)
-		echo "${meta.id}_${meta.run}.raw.bam: \$bam_count alignments"
+		echo "${meta.id}_${meta.run}.raw.bam: \$bam_count aligned reads"
 		"""
 }
 
@@ -223,34 +230,26 @@ process merge_run_bams {
 		"""
 		module load samtools
 		
-		echo "=== PROCESS_MERGE_RUN_BAMS ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== MERGE_RUN_BAMS ======"
 		echo "Strategy: Combine BAM files from the same sample across runs"
-		echo "samtools \$(samtools --version)"
-		echo "=== PROCESS_MERGE_RUN_BAMS ==="
+		echo "\$(samtools --version | head -1)"
+		echo "====== MERGE_RUN_BAMS ======"
+		echo "====== PROCESS_SUMMARY"
 		
-		echo "=== Input Files ==="
-		file_count=\$(echo $bam_files | wc -w)
-		echo "Number of BAM files to merge: \$file_count"
+
+		echo "=== Merging BAM files from multiple runs"
+		for bam in $bam_files; do
+			read_count=\$(samtools view -c \$bam)
+			echo "\$bam: \$read_count aligned reads"
 		done
-        
-		if [ \$file_count -gt 1 ]; then
-			echo "=== Merging multiple BAM files ==="
-			for bam in $bam_files; do
-				read_count=\$(samtools view -c \$bam)
-				echo "\$bam: \$read_count alignments"
 
-			samtools merge ${meta.id}.merged.bam $bam_files
+		samtools merge ${meta.id}.merged.bam $bam_files
 
-			echo "=== Output Files ==="
-			merged_count=\$(samtools view -c ${meta.id}.merged.bam)
-			echo "${meta.id}.merged.bam: \$merged_count alignments"
+		echo "=== Merged bam"
+		merged_count=\$(samtools view -c ${meta.id}.merged.bam)
+		echo "${meta.id}.merged.bam: \$merged_count aligned reads"
 
-		else
-			echo "=== Single BAM file - creating symlink ==="
-			echo "$bam_files"
-			actual_file=\$(readlink -f $bam_files)
-			ln -s "\$actual_file" ${meta.id}.merged.bam
-		fi
 		"""
 }
 
@@ -261,10 +260,10 @@ process filter_bams {
 	input:
 		tuple val(meta), path(bam)
 	output:
-		tuple val(meta), path('*filtered.bam')
+		tuple val(meta), path('*.filtered.bam')
 	script:
 		"""
-		sh ${projectDir}/bin/filter_bams.sh $bam ${meta.id} ${params.genome_blacklist}
+		sh ${projectDir}/bin/filter_bams.sh $bam ${meta.name} ${params.genome_blacklist}
 		"""
 }
 
@@ -275,7 +274,7 @@ process filter_bams {
  * Take the 5' fragment ends as transcript locations with shift 100 ext 200
  */
 process call_peaks {
-	publishDir 'peaks', mode: 'copy'
+	publishDir 'output/peaks', mode: 'copy', pattern: '*_peaks.narrowPeak'
 	input:
 		tuple val(meta), path(bam)
 	output:
@@ -289,13 +288,15 @@ process call_peaks {
 		module load bedtools
 		module load macs
 
-		echo "=== PROCESS_CALL_PEAKS ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== CALL_PEAKS ======"
 		echo "Strategy: Call peaks from fragment 5' ends"
 		echo "Convert bam files to bed using bedtools \$(bedtools --version)"
 		echo "Call peaks with macs2 \$(macs2 --version)"
 		echo "--shift -100 --extsize 200 --keep-dup all"
 		echo "--qvalue 0.01 --min-length 100 --gsize 2500000000"
-		echo "=== PROCESS_CALL_PEAKS ==="
+		echo "====== CALL_PEAKS ======"
+		echo "====== PROCESS_SUMMARY"
 		
 		# Convert to bed file with each read as an individual fragment
 		echo "=== Convert $bam to ${meta.name}.bed"
@@ -317,6 +318,11 @@ process call_peaks {
 		grep "total tags in treatment" "${meta.name}.macs.log"
 		tail -1 "${meta.name}.macs.log"
 		
+		# Ensure peak file exists (create empty if MACS2 found no peaks)
+		if [ ! -f "${meta.name}_peaks.narrowPeak" ]; then
+			touch "${meta.name}_peaks.narrowPeak"
+		fi
+		
 		# Confirm peak file creation
 		peak_count=\$(wc -l < "${meta.name}_peaks.narrowPeak")
 		echo "Called \$peak_count peaks"
@@ -328,7 +334,7 @@ process call_peaks {
  * Strategy: Keep peaks found in at least 2 samples, merge nearby peaks
  */
 process merge_peaks {
-	publishDir 'peaks', mode: 'copy'
+	publishDir 'output/peaks', mode: 'copy'
 	input:
 		path(peak_files)
 	output:
@@ -340,14 +346,16 @@ process merge_peaks {
 		# Load required modules
 		module load bedtools
 		
-		echo "=== PROCESS_MERGE_PEAKS ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== MERGE_PEAKS ======"
 		echo "Strategy: Create consensus peaks from multiple samples"
 		echo "bedtools \$(bedtools --version)"
 		echo "Keep peaks found in >=2 samples, merge nearby peaks (100bp)"
-		echo "=== PROCESS_MERGE_PEAKS ==="
+		echo "====== MERGE_PEAKS ======"
+		echo "====== PROCESS_SUMMARY"
 
 		echo "=== Creating consensus peak set from \$(echo $peak_files | wc -w) samples"
-		echo "${peak_files}
+		echo "${peak_files}"
 
 		# Step 1: Combine all peaks and sort by genomic coordinates
 		cat $peak_files | sort -k1,1 -k2,2n > all_peaks.bed
@@ -361,7 +369,11 @@ process merge_peaks {
 		
 		# Step 3: Keep only peaks found in at least 2 samples
 		# Column 11 contains the overlap count from bedtools intersect -c
-		awk '\$11 >= 2' peaks_with_counts.bed | sort -k1,1 -k2,2n > filtered_peaks.bed
+		if [ -s peaks_with_counts.bed ]; then
+			awk '\$11 >= 2' peaks_with_counts.bed | sort -k1,1 -k2,2n > filtered_peaks.bed
+		else
+			touch filtered_peaks.bed
+		fi
 		
 		# Step 4: Merge peaks within 100bp of each other
 		bedtools merge -i filtered_peaks.bed -d 100 > merged.bed
@@ -378,7 +390,7 @@ process merge_peaks {
  * Uses both bedtools and featureCounts approaches for comparison
  */
 process count_under_peaks {
-	publishDir 'peak_counts', mode: 'copy'
+	publishDir 'output/counts', mode: 'copy'
 	input:
 		tuple path(merged_peaks), val(meta), path(bam), path(bed)
 	output:
@@ -391,12 +403,14 @@ process count_under_peaks {
 		module load bedtools
 		module load subread  # for featureCounts
 		
-		echo "=== PROCESS_COUNT_UNDER_PEAKS ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== COUNT_UNDER_PEAKS ======"
 		echo "Strategy: Count reads overlapping consensus peaks"
 		echo "bedtools \$(bedtools --version)"
 		echo "subread (featureCounts) \$(subread --version)"
 		echo "Uses both bedtools intersect and featureCounts methods"
-		echo "=== PROCESS_COUNT_UNDER_PEAKS ==="
+		echo "====== COUNT_UNDER_PEAKS ======"
+		echo "====== PROCESS_SUMMARY"
 
 		echo "=== Counting reads under consensus peaks for sample ${meta.id}"
 		
@@ -449,14 +463,16 @@ process measure_depth {
 		"""
 		module load samtools
 		
-		echo "=== PROCESS_MEASURE_DEPTH ==="
-		echo "Strategy: Count first reads for scaling normalization"
-		echo "samtools \$(samtools --version | head -1)"
-		echo "=== PROCESS_MEASURE_DEPTH ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== MEASURE_DEPTH ======"
+		echo "Strategy: Count read pairs for scaling normalization"
+		echo "\$(samtools --version | head -1)"
+		echo "====== MEASURE_DEPTH ======"
+		echo "====== PROCESS_SUMMARY"
 		
-		echo "$bam depth:
+		echo "$bam depth:"
 		## Calculate size for eventual scaling
-		echo \$(samtools view -f 64 -c $bam) | tr -d '\n'
+		samtools view -f 64 -c $bam
 
 		"""
 }
@@ -465,7 +481,7 @@ process measure_depth {
  * convert bam files to bigwig
  */
 process bam_to_bigwig {
-	publishDir 'bigwigs', mode: 'copy'
+	publishDir 'output/bigwigs', mode: 'copy'
 	input:
 		tuple val(min_depth), val(meta), path(bam)
 	output:
@@ -479,12 +495,14 @@ process bam_to_bigwig {
 		module load deeptools
 		module load samtools
 
-		echo "=== PROCESS_BAM_TO_BIGWIG ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== BAM_TO_BIGWIG ======"
 		echo "Strategy: Convert BAM to normalized BigWig for visualization"
 		echo "deeptools \$(deeptools --version)"
-		echo "samtools \$(samtools --version)"
+		echo "\$(samtools --version | head -1)"
 		echo "Scale factor: min_depth/sample_depth"
-		echo "=== PROCESS_BAM_TO_BIGWIG ==="
+		echo "====== BAM_TO_BIGWIG ======"
+		echo "====== PROCESS_SUMMARY"
 
 		# create scale based on depth and minimum depth of all samples
 		scale=\$(echo "scale=5; $min_depth/${meta.depth}" | bc)
@@ -509,10 +527,12 @@ process create_multimacs_run {
 		stdout emit: "done"
 	script:
 		"""
-		echo "=== PROCESS_CREATE_MULTIMACS_RUN ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== CREATE_MULTIMACS_RUN ======"
 		echo "Strategy: Prepare multimacs command for peak calling"
 		echo "Introduce --chip [bams] --name [condition] to template"
-		echo "=== PROCESS_CREATE_MULTIMACS_RUN ==="
+		echo "====== CREATE_MULTIMACS_RUN ======"
+		echo "====== PROCESS_SUMMARY"
 		
 		# Move run template to launchDir
 		if ! test -f ${launchDir}/output/multimacs_command.sh; then
@@ -533,23 +553,28 @@ process create_multimacs_run {
 }
 process run_multimacs {
 	//publishDir 'multimacs_pipeline', mode: 'move'
+	errorStrategy 'ignore'
 	input:
 		val _
 	output:
-		path "*"
+		path "*", optional: true
 	script:
 		"""
 		module use /uufs/chpc.utah.edu/common/home/hcibcore/Modules/modulefiles
 
 		module load multirepchipseq
 		module load parallel
+		module load bedtools
 
-		echo "=== PROCESS_RUN_MULTIMACS ==="
+		echo "====== PROCESS_SUMMARY"
+		echo "====== RUN_MULTIMACS ======"
 		echo "Strategy: Execute multimacs pipeline for peak analysis"
 		echo "multirepchipseq \$(multirepchipseq --version)"
 		echo "parallel \$(parallel --version)"
+		echo "bedtools \$(bedtools --version)"
 		echo "run parameters are in launchDir/output"
-		echo "=== PROCESS_RUN_MULTIMACS ==="
+		echo "====== RUN_MULTIMACS ======"
+		echo "====== PROCESS_SUMMARY"
 
 		${launchDir}/output/multimacs_command.sh
 		"""

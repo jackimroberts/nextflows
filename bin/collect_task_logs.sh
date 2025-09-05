@@ -14,6 +14,8 @@ if [[ -z "$OUT_DIR" ]]; then
     OUT_DIR=$LAUNCH_DIR
 fi
 
+mkdir -p $OUT_DIR
+
 # Find work directory
 work_pattern="$LAUNCH_DIR"
 [[ -d "$LAUNCH_DIR/work" ]] && work_pattern="$LAUNCH_DIR/work"
@@ -34,7 +36,7 @@ while IFS='|' read -r done_time out_file; do
     cat "$out_file"
     echo
 done | \
-awk -v RS="=== PROCESS_" '!seen[$0]++{print $0 "\n"}' > "$OUT_DIR/task_logs.txt"
+awk -v RS="====== PROCESS_SUMMARY" 'NR==1{print $0} NR>1 && !seen[$0]++{print "====== PROCESS_SUMMARY" $0}' > "$OUT_DIR/task_logs.txt"
 
 # Collect all .command.err files, sort by timestamp, and deduplicate process blocks
 {
