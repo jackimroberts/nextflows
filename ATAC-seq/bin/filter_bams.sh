@@ -50,9 +50,14 @@ echo "====== PROCESS_SUMMARY"
 echo "filtering: $filepath"
 
 ## Count initial reads
-echo "=== Initial Read Counts"
 initial_reads=$(samtools view -c $filepath)
-echo "Initial reads: $initial_reads"
+echo "$initial_reads: Initial reads"
+
+## Count specific read types
+unaligned_reads=$(samtools view -c -f 4 $filepath)
+secondary_reads=$(samtools view -c -f 256 $filepath)
+echo "$unaligned_reads : unaligned"
+echo "$secondary_reads : secondary"
 
 ## Sort BAM file by name for fixmate
 samtools sort -n -@ $(nproc) $filepath -o $sample.tmp
@@ -67,11 +72,16 @@ samtools sort -@ $(nproc) $sample.fixmate.bam -o $sample.sorted.bam
 samtools markdup -d 2500 -@ $(nproc) $sample.sorted.bam $sample.dedup.bam
 
 ## Count duplicates
-echo "=== Duplicate Statistics"
 total_after_dedup=$(samtools view -c $sample.dedup.bam)
 duplicates=$(($initial_reads - $total_after_dedup))
-echo "Duplicates marked: $duplicates"
-echo "Reads after deduplication: $total_after_dedup"
+
+## Get optical vs other duplicates from markdup output
+optical_duplicates=$(samtools view -c -f 1024 $sample.dedup.bam | grep -o '[0-9]*' || echo "0")
+other_duplicates=$(($duplicates - $optical_duplicates))
+
+echo "$duplicates : duplicates"
+echo "$optical_duplicates : optical duplicates"
+echo "$other_duplicates : other duplicates"
 
 ## Index the deduplicated BAM file for idxstats
 samtools index $sample.dedup.bam
@@ -80,17 +90,14 @@ samtools index $sample.dedup.bam
 CHROMS=$(samtools idxstats $sample.dedup.bam | cut -f 1 | grep -v -E '(MT|chrM|chrMT)' | tr '\n' ' ')
 
 ## Count mitochondrial reads before filtering
-echo "=== Mitochondrial Read Statistics ==="
 mito_reads=$(samtools idxstats $sample.dedup.bam | grep -E '(MT|chrM|chrMT)' | awk '{sum+=$3} END {print sum+0}')
-echo "Mitochondrial reads: $mito_reads"
+echo "$mito_reads : mitochondrial"
 
 ## Filter out duplicates, unaligned, secondary alignments, and chrM
 samtools view -@ $(nproc) -b -F 3332 $sample.dedup.bam $CHROMS > $sample.filt.bam
 
 ## Count reads after filtering
-echo "=== Post-filtering Statistics"
 reads_after_filter=$(samtools view -c $sample.filt.bam)
-echo "Reads after removing duplicates, unaligned, secondary, and mitochondrial: $reads_after_filter"
 
 ## Index intermediate file
 samtools index $sample.filt.bam
@@ -100,7 +107,7 @@ if [ -f "$blacklist" ]; then
 	echo "=== Blacklist Filtering"
 	bedtools intersect -v -abam $sample.filt.bam -b $blacklist > $sample.filtered.bam
 	blacklist_removed=$(($reads_after_filter - $(samtools view -c $sample.filtered.bam)))
-	echo "Reads removed by blacklist filtering: $blacklist_removed"
+	echo "$blacklist_removed : blacklisted"
 else
 	echo "=== No Blacklist Filtering"
 	echo "No blacklist file provided, skipping blacklist filtering"
@@ -111,9 +118,8 @@ fi
 samtools index $sample.filtered.bam
 
 ## Final read count summary
-echo "=== Final Summary"
 final_reads=$(samtools view -c $sample.filtered.bam)
-echo "Final filtered reads: $final_reads"
+echo "Reads retained: $final_reads"
 echo "Total reads removed: $(($initial_reads - $final_reads))"
 echo "Retention rate: $(echo "scale=2; $final_reads * 100 / $initial_reads" | bc)%"
 

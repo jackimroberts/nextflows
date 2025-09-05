@@ -18,7 +18,7 @@ process make_sample_table {
 		echo "====== PROCESS_SUMMARY"
 		echo "====== MAKE_SAMPLE_TABLE ======"
 		echo "Strategy: Converts *.txt to tsv [id, name, condition]"
-		echo "Manipulation in R \$(R --version)"
+		echo "Manipulation in \$(R --version | head -1)"
 		echo "====== MAKE_SAMPLE_TABLE ======"
 		echo "====== PROCESS_SUMMARY"
 

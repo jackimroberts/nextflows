@@ -36,7 +36,7 @@ while IFS='|' read -r done_time out_file; do
     cat "$out_file"
     echo
 done | \
-awk -v RS="====== PROCESS_SUMMARY" 'NR==1{print $0} NR>1 && !seen[$0]++{print "====== PROCESS_SUMMARY" $0}' > "$OUT_DIR/task_logs.txt"
+awk -v RS="====== PROCESS_SUMMARY" 'NR==1{print $0} NR>1 && !seen[$0]++{print $0}' > "$OUT_DIR/task_logs.txt"
 
 # Collect all .command.err files, sort by timestamp, and deduplicate process blocks
 {

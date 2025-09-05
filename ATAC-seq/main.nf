@@ -9,13 +9,6 @@ params.miniaturize = false
 params.fastq_source = true
 params.sample_table = "*.txt"
 
-/*
- * Things I'd like to add:
- ** qc throughout
- ** create containerized version
- ** deploy on cloud
-*/
-
 params.help = false
 if (params.help) {
         println """
@@ -153,11 +146,12 @@ process adapter_trim {
 		echo "Strategy: Remove adapters and low quality bases from reads"
 		echo "trimmed with cutadapt \$(cutadapt --version)"
 		echo "-O 1 --nextseq-trim=20 -m 1"
-		echo "adapters forward: \$adaptf and reverse: \$adaptr"
+		echo "forward adapter: \$adaptf"
+		echo "and reverse: \$adaptr"
 		echo "====== ADAPTER_TRIM ======"
 		echo "====== PROCESS_SUMMARY"
 
-		echo "=== trimming $fastqs"
+		echo "=== trimming ${meta.id}_${meta.run}"
 
 		cutadapt -O 1 --nextseq-trim=20 -m 1 -a \$adaptf -A \$adaptr \\
 			-o ${meta.id}_${meta.run}.1.fq -p ${meta.id}_${meta.run}.2.fq \\
@@ -166,11 +160,12 @@ process adapter_trim {
 		# Extract key stats from cutadapt log
 		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' cutadapt.log | head -n -1
 		
-		echo "=== Input Files"
 		# Count reads in input files (assuming gzipped)
 		read_count=\$(( \$(gunzip -c ${fastqs[0]} | wc -l) / 4 ))
-		echo "\$read_count reads after trimming"
-		
+		echo "\$read_count paired reads before trimming"
+
+		read_count=\$(( ${meta.id}_${meta.run}.1.fq | wc -l) / 4 ))
+		echo "\$read_count paired reads after trimming"
 		"""
 }
 
@@ -202,7 +197,7 @@ process bowtie_align {
 		echo "====== BOWTIE_ALIGN ======"
 		echo "====== PROCESS_SUMMARY"
 
-		echo "aligning $r1/.2.fq" 
+		echo "=== aligning $r1/.2.fq" 
 		bowtie2 --local --very-sensitive --no-mixed --no-discordant -p \$(nproc) \\
 			-x ${params.genome_index} -1 ${r1} -2 ${r2} \\
 			2> bowtie.log | \\
@@ -214,7 +209,7 @@ process bowtie_align {
 		
 		echo "=== Output Files"
 		bam_count=\$(samtools view -c ${meta.id}_${meta.run}.raw.bam)
-		echo "${meta.id}_${meta.run}.raw.bam: \$bam_count aligned reads"
+		echo "${meta.id}_${meta.run}.raw.bam: \$bam_count reads aligned"
 		"""
 }
 
