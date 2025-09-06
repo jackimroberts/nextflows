@@ -1,0 +1,166 @@
+---
+title: "DESeq analysis"
+author: "Jacqueline Roberts, PhD"
+date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
+output: html_document
+params:
+ args: ''	
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE,
+                      cache = TRUE, cache.lazy = FALSE)
+
+if (!require("pacman")) install.packages("pacman")
+
+pacman::p_load(tidyverse,DESeq2,pheatmap,biomaRt,RColorBrewer)
+
+set.seed(1234)
+
+#read in nextflow channel inputs
+metadata <- params$args[1]
+count_paths <- params$args[2]
+database <- params$args[3]
+
+#create directories for output
+dir.create("DESeq_results")
+dir.create("DESeq_results/plots")
+```
+
+### I have aligned to $database
+
+### Here I'm loading in the counts
+```{r input}
+metadata
+count_paths
+database
+```
+
+#```{r get_counts}
+#get file path names
+
+i<-file_paths[1]
+counts<-read_tsv(paste0(i,"/",i,".counts"),skip=1)[,c(1,7)]
+colnames(counts)[2]<-i
+for (i in file_paths[-c(1)]){
+  x<-read_tsv(paste0(i,"/",i,".counts"),skip=1)[,c(1,7)]
+  colnames(x)[2]<-i
+  counts<-inner_join(counts,x)
+}
+
+coldata = data.frame(name=colnames(counts)[-c(1)],
+                     condition = sub("_.*","",colnames(counts)[-c(1)]),
+                     stringsAsFactors = TRUE)
+
+dds <- DESeqDataSetFromMatrix(countData = counts[, -c(1)],
+                       colData = coldata,
+                       design = ~condition)
+
+rownames(dds) <- counts$Geneid
+
+keep <- rowSums(counts(dds) >= 2) >= 2
+dds <- dds[keep,]
+
+dds <- DESeq(dds)
+
+write_rds(dds,"DESeq_results/DESeq.rds")
+```
+
+#```{r gene_names}
+
+mart <- useEnsembl(biomart = "ensembl", 
+                   dataset = "mmusculus_gene_ensembl", 
+                   mirror = "asia")
+g <- getBM(filters= "ensembl_gene_id", 
+           	attributes= c("ensembl_gene_id","external_gene_name"),
+		values=counts$Geneid, 
+		mart= mart)
+
+counts <- counts %>% dplyr::rename(ensembl_gene_id = Geneid)%>%
+  left_join(g)
+write_tsv(counts,"DESeq_results/gene_counts.tsv")
+```
+
+### some plots for sample similarities
+#```{r plots}
+vsd <- vst(dds, blind=FALSE)
+
+# Plot of the 20 most highly expressed genes
+select <- order(rowMeans(counts(dds,normalized=TRUE)),
+                decreasing=TRUE)[1:20]
+df <- as.data.frame(colData(dds)[,c("condition")])
+x<-as.data.frame(assay(vsd)[select,]) %>% 
+  rownames_to_column("ensembl_gene_id") %>% 
+  left_join(g) %>% dplyr::select(-c(ensembl_gene_id)) %>%
+  column_to_rownames("external_gene_name")
+pheatmap(x, cluster_rows=FALSE)
+
+sampleDists <- dist(t(assay(vsd)))
+sampleDistMatrix <- as.matrix(sampleDists)
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows=sampleDists,
+         clustering_distance_cols=sampleDists,
+         col=colors)
+
+plotPCA(vsd, intgroup=c("name"))+ggrepel::geom_text_repel(aes(label=name),color="black")+theme_bw()+theme(legend.position = "none")
+```
+
+### Differential expression analysis
+
+#```{r DE_results}
+g <- getBM(filters= "ensembl_gene_id", 
+           	attributes= c("ensembl_gene_id","external_gene_name", "chromosome_name","description"),
+		values=rownames(dds), 
+		mart= mart)
+
+res<-as.data.frame(results(dds))%>% 
+  rownames_to_column("ensembl_gene_id")%>% 
+  mutate(log2FoldChange=log2FoldChange * (-1))%>%
+  left_join(g) %>% mutate(padj=replace_na(padj,1))
+write_tsv(res,"DESeq_results/differential_expression.tsv")
+
+x<-filter(res,padj<0.05)
+nrow(x)
+
+ggplot(x,aes(log2FoldChange,-log(padj+(1e-300))))+
+  geom_point()+
+  ggrepel::geom_text_repel(data=top_n(x,50,-padj),aes(label=external_gene_name))+
+  theme_bw()+ggtitle("Significantly differentially expressed genes")+xlab("fold change: Il33_KO vs control")
+
+ggsave("DESeq_results/plots/DE_volcano.jpg",height=15,width=15)
+
+ks3<-readxl::read_excel("Keren-Shaul_sup3.xlsx") %>% 
+  filter(`Gene name` %in% res$external_gene_name) %>% 
+  mutate(pval=as.numeric(`DAM FDR p-value`),fc=as.numeric(`Fold-change (DAM to homeostatic microglia)`)) %>%
+  filter(fc>0) %>% #positive is DAM, negative is homeo 
+  top_n(500,pval) #pval is actually log10
+
+x<-filter(res,external_gene_name %in% ks3$`Gene name`)
+ggplot(x,aes(log2FoldChange,-log(pvalue+(1e-300))))+
+  geom_point()+
+  geom_point(data=filter(x,padj<0.05),color="red") +
+  ggrepel::geom_text_repel(data=top_n(x,50,-padj),aes(label=external_gene_name))+
+  theme_bw()+ggtitle("top 500 DAM genes from Keren-Shaul, sup3")+xlab("fold change: Il33_KO vs control")
+ggsave("DESeq_results/plots/DE_volcano2.jpg",height=7,width=7)
+
+ks3<-readxl::read_excel("Keren-Shaul_sup3.xlsx") %>% 
+  filter(`Gene name` %in% res$external_gene_name) %>% 
+  mutate(pval=as.numeric(`DAM FDR p-value`),fc=as.numeric(`Fold-change (DAM to homeostatic microglia)`)) %>%
+  filter(fc<0) %>% #positive is DAM, negative is homeo 
+  top_n(500,pval) #pval is actually log10
+
+x<-filter(res,external_gene_name %in% ks3$`Gene name`)
+ggplot(x,aes(log2FoldChange,-log(pvalue+(1e-300))))+
+  geom_point()+
+  geom_point(data=filter(x,padj<0.05),color="red") +
+  ggrepel::geom_text_repel(data=top_n(x,50,-padj),aes(label=external_gene_name))+
+  theme_bw()+ggtitle("top 500 Hom genes from Keren-Shaul, sup3")+xlab("fold change: Il33_KO vs control")
+ggsave("DESeq_results/plots/DE_volcano3.jpg",height=7,width=7)
+
+```
+```{r end}
+sessionInfo()
+```
