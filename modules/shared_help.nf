@@ -31,7 +31,7 @@ def getSharedHelp() {
                         Select files > More options dropdown menu > Secure link >
                         paste into a "core_links" text file
                 
-                ="SSD/YYYYMMDD_run_identifier/email_subject_line:password"
+                ="SSD/illumina/YYYYMMDD_run_identifier/email_subject_line:password"
                         UCSF core emails a filepath and password after sequencing
                 
                 ="SRA"
