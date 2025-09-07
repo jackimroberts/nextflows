@@ -43,11 +43,11 @@ workflow {
 	// pair up fastq files by sample id
 	sample_sheet
 		| combine ( fastq_list )
-		| filter { sample_id, sample_name, condition, fastq_file ->
+		| filter { sample_id, sample_name, condition, extra_data, fastq_file ->
 			fastq_file.name.startsWith(sample_id + "_")
 		}
-      		| map { sample_id, sample_name, condition, fastq_file ->
-          		def meta = [id: sample_id, name: sample_name, condition: condition]
+      		| map { sample_id, sample_name, condition, extra_data, fastq_file ->
+          		def meta = [id: sample_id, name: sample_name, condition: condition, extra: extra_data]
           		[meta.id, meta, fastq_file]
       		}
       		| groupTuple()  // Group by id

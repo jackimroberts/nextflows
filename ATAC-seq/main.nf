@@ -33,12 +33,12 @@ workflow {
 	// pair up fastq files by sample id and run, keeping runs separate
  	sample_sheet
      		| combine(fastq_list)
-      		| filter { sample_id, sample_name, condition, fastq_file ->
+      		| filter { sample_id, sample_name, condition, extra_data, fastq_file ->
           		fastq_file.name.startsWith(sample_id + "_")
       		}
-      		| map { sample_id, sample_name, condition, fastq_file ->
+      		| map { sample_id, sample_name, condition, extra_data, fastq_file ->
           		def run_part = fastq_file.name.replaceAll("^${sample_id}_", "").replaceAll("[-_][LR][12][.-_].*", "")
-          		def meta = [id: sample_id, name: sample_name, condition: condition, run: run_part]
+          		def meta = [id: sample_id, name: sample_name, condition: condition, run: run_part, extra: extra_data]
           		[[meta.id, meta.run], meta, fastq_file]
       		}
       		| groupTuple()  // Group by the [id, run] tuple

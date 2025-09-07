@@ -38,7 +38,7 @@ workflow {
       		}
       		| map { sample_id, sample_name, condition, extra_data, fastq_file ->
           		def run_part = fastq_file.name.replaceAll("^${sample_id}_", "").replaceAll("[-_][LR][12][.-_].*", "")
-          		def meta = [id: sample_id, name: sample_name, condition: condition, run: run_part]
+          		def meta = [id: sample_id, name: sample_name, condition: condition, run: run_part, extra: extra_data]
           		[[meta.id, meta.run], meta, fastq_file]
       		}
       		| groupTuple()  // Group by the [id, run] tuple

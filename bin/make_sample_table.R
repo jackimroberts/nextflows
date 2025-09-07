@@ -10,7 +10,7 @@
 ## ---------------------------
 ##
 ## Usage:
-##	./make_sample_table.R <input_filename>
+##	./make_sample_table.R <input_filepath>
 ##	
 ##	input_filename: Path to input sample table file
 ##
@@ -28,25 +28,45 @@ require(tidyverse)
 
 ## ---------------------------
 
-## manipulate table to have c(ID,Sample_Name,condition)
+## manipulate table to have c(ID,Sample_Name,condition,...)
 ## ID should match the fastq and be unique
-## Sample_Name is arbitrary and can be the same as ID
-## condition will be compared
+## Sample_Name and condition will be generated if not present
+##
 
 args = commandArgs(TRUE)
 
-input_filename <- args[1]
+input_filepath <- args[1]
 
-input_table <- read_tsv(input_filename) 
+# read_input table
+# exclude commented lines, assume header
+input_table<-read.delim("EscoubasC_Sample ID for seq analysis.txt",
+	comment.char="#",
+	sep="\t")
 
-if(all(c("ID","Sample Name") %in% colnames(input_table))){
-	input_table<- input_table %>% 
-		select(ID,`Sample Name`) %>%
-		rename(name=`Sample Name`) %>%
-		mutate(name=str_replace_all(name," ","_"), # spaces are now underscores
-			name=str_replace_all(name,"#",""), # removed hashtags
-			condition = sub(".*_","",name))	# took the last part of the name as condition...
+# determine if the colnames is likely a row
+has_header = FALSE 
+for (test_col in 1:ncol(input_table){
+	# if all values in a column are the length, and the column name is different
+	# then it's probably header
+	if (length (unique (str_length (x[,test_col])))==1 
+		& !identical(str_length(x[,test_col]),str_length(colnames[test_col]) {
+		has_header = TRUE
+	}
 }
+
+# move colnames into the table if there's no header
+if (has_header==FALSE){ input_table <- rbind(colnames(input_table),input_table) }
+
+# assume there is always an id for fastq files first
+# if there is only id, use that for name as well
+if (ncol(input_table) == 1){ input_table[,2] <- input_table[,1] }
+
+# make sure name doesn't contain spaces
+input_table[,2] <- str_replace_all(input_table[,2]," ","_")
+
+# if there is no condition, use name
+# take only information after a delimiter.
+if (ncol(input_table) == 2){ input_table[,3] <- sub(".*[_-]","",input_table[,2]) }
 
 ## ---------------------------
 
@@ -54,4 +74,4 @@ if(all(c("ID","Sample Name") %in% colnames(input_table))){
 
 write_tsv(input_table,"sample_table.tsv",col_names=FALSE)
 
-print(input_table)
+input_table
