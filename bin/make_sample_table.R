@@ -37,19 +37,19 @@ args = commandArgs(TRUE)
 
 input_filepath <- args[1]
 
-# read_input table
+# read input_table
 # exclude commented lines, assume header
-input_table<-read.delim("EscoubasC_Sample ID for seq analysis.txt",
+input_table<-read.delim(input_filepath,
 	comment.char="#",
 	sep="\t")
 
 # determine if the colnames is likely a row
 has_header = FALSE 
-for (test_col in 1:ncol(input_table){
+for (test_col in 1:ncol(input_table)){
 	# if all values in a column are the length, and the column name is different
 	# then it's probably header
-	if (length (unique (str_length (x[,test_col])))==1 
-		& !identical(str_length(x[,test_col]),str_length(colnames[test_col]) {
+	if (length (unique (str_length (input_table[,test_col])))==1 
+		& !identical(str_length(input_table[1,test_col]),str_length(colnames(input_table)[test_col]))) {
 		has_header = TRUE
 	}
 }
