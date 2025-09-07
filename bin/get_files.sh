@@ -40,12 +40,11 @@ IFS=',' read -ra SOURCES <<< "$input_sources"
 for source in "${SOURCES[@]}"; do
 	# Trim whitespace
       	source=$(echo "$source" | xargs)
-      	echo "Processing source: $source"
 
 
 	if [[ "$source" == *"gnomex"* ]]; then
 		echo "=== downloading fastq files from GNomEx, using FDT command line"
-
+		echo "Processing source: $source"
 		# true location of fdt app with parallel optimization
 		FDT="java -jar /uufs/chpc.utah.edu/sys/pkg/fdt/0.9.20/fdt.jar"
 
@@ -56,7 +55,7 @@ for source in "${SOURCES[@]}"; do
 
 	elif [[ "$source" == "CoreBrowser" ]] && [[ -f "${launch_dir}/core_links" ]]; then
 		echo "=== downloading fastq files from Utah core browser via aria"
-
+		echo "Processing source: $source"
 		module load aria2
 
 		aria2c -i "${launch_dir}/core_links" -j $(nproc) -x 16
@@ -67,6 +66,7 @@ for source in "${SOURCES[@]}"; do
 		# parse directory and password from format: directory:password
 		directory="${source%%:*}"
 		password="${source##*:}"
+		echo "Processing source: $directory:password"
 
 		# use lftp for parallel transfer
 		lftp -u hiseq_user,"$password" sftp://fastq.ucsf.edu <<-EOF
@@ -79,7 +79,7 @@ for source in "${SOURCES[@]}"; do
 
 	elif [[ "$source" == "SRA" ]] && [[ -f "$sample_table" ]]; then
 		echo "=== downloading fastq files from SRA"
-	
+		echo "Processing source: $source"	
 		# load SRA toolkit
 		module load sra-toolkit
 	
@@ -91,7 +91,7 @@ for source in "${SOURCES[@]}"; do
 				echo "Completed {}" || echo "FAILED: {}"'
 	
 	else
-		echo "=== couldn't identify source"
+		echo "=== couldn't identify source: $source"
 	fi
 done
 
