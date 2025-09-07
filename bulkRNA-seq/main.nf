@@ -287,14 +287,7 @@ process adapter_trim {
 		
 		# Extract key stats from cutadapt log
 		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' cutadapt.log | head -n -1
-		
-		# Count reads in input files (assuming gzipped)
-		read_count=\$(( \$(gunzip -c ${fastqs[0]} | wc -l) / 4 ))
-		echo "\$read_count paired reads before trimming"
-
-		read_count=\$(( \$(wc -l < ${meta.id}_${meta.run}.1.fq) / 4 ))
-		echo "\$read_count paired reads after trimming"
-		
+				
 		#QC
 		fastqc -T \$(`nproc`) -f fastq ${meta.id}_${meta.run}.1.fq
 		fastqc -T \$(`nproc`) -f fastq ${meta.id}_${meta.run}.2.fq
@@ -354,7 +347,11 @@ process star_align {
 			--quantMode ${params.star.quantMode} \\
 			--outWigType ${params.star.outWigType} \\
 			--outWigStrand ${params.star.outWigStrand} \\
-			--outSAMunmapped ${params.star.outSAMunmapped}
+			--outSAMunmapped ${params.star.outSAMunmapped} \\
+			> star.log 2>&1
+		
+		# Output only the last line of STAR stdout
+		tail -1 star.log
 
 		mv Aligned.sortedByCoord.out.bam ${meta.id}_${meta.run}.raw.bam
 

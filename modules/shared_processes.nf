@@ -17,7 +17,7 @@ process make_sample_table {
 
 		echo "====== PROCESS_SUMMARY"
 		echo "====== MAKE_SAMPLE_TABLE ======"
-		echo "Strategy: Converts *.txt to tsv [id, name, condition]"
+		echo "Strategy: Converts txt to .tsv [id, name, condition ...]"
 		echo "Manipulation in \$(R --version | head -1)"
 		echo "====== MAKE_SAMPLE_TABLE ======"
 		echo "====== PROCESS_SUMMARY"
@@ -44,7 +44,7 @@ process get_fastq {
 		echo "====== GET_FASTQ ======"
 		echo "====== PROCESS_SUMMARY"
 
-		sh ${projectDir}/../bin/get_files.sh "${input_file_source}" "${sample_table_file}" "${launchDir}"
+		sh ${projectDir}/../bin/get_files.sh "${input_file_source}" "${sample_table_file}" "${launchDir}" ${task.cpus}
 		"""
 }
 
@@ -58,18 +58,19 @@ process decompress {
 		path "*fastq.gz"
 	script:
 		"""
+		# module load oradecompression/2.7.0
+
 		echo "====== PROCESS_SUMMARY"
 		echo "====== DECOMPRESS ======"
-		echo "Strategy: Decompress *ora files to *fastq.gz"
+		echo "Strategy: Decompress .ora files to .fastq.gz"
 		echo "Uses orad 2.7.0"
 		echo "====== DECOMPRESS ======"
 		echo "====== PROCESS_SUMMARY"
 		
 		echo "=== input ORA file"
-		du -h ${ora_file}
-		
-		# module load oradecompression/2.7.0
-		/uufs/chpc.utah.edu/common/home/hcibcore/atlatl/app/orad/2.7.0/orad "${ora_file}"
+		ls -lh ${ora_file} | awk '{print \$9 ": " \$5}'
+
+		/uufs/chpc.utah.edu/common/home/hcibcore/atlatl/app/orad/2.7.0/orad "${ora_file}" >/dev/null 2>&1
 
 		echo "=== decompressed fastq.gz files"
 		ls -lh *.fastq *.fastq.gz | awk '{print \$9 ": " \$5}'
@@ -90,8 +91,8 @@ process miniaturize {
 		"""
 		echo "====== PROCESS_SUMMARY"
 		echo "====== MINIATURIZE ======"
-		echo "Strategy: Miniaturize fastq files for quicker pipelines
-		echo "If *gz it decompresses and recompresses
+		echo "Strategy: Miniaturize fastq files for quicker pipelines"
+		echo "Files reduced and compression is maintained"
 		echo "====== MINIATURIZE ======"
 		echo "====== PROCESS_SUMMARY"
 
