@@ -15,8 +15,14 @@ workflow FASTQ_PREPROCESSING {
     // Create sample table
     sample_table_file
         | make_sample_table 
-        | splitCsv(header:['sample_id','sample_name','condition'], sep:"\t") 
-        | map { row -> [row.sample_id, row.sample_name, row.condition] }
+        | splitCsv(sep:"\t") 
+        | map { row -> 
+            def sample_id = row[0]
+            def sample_name = row[1] 
+            def condition = row[2]
+            def extra_data = row.size() > 3 ? row[3..-1].join('\t') : ""
+            [sample_id, sample_name, condition, extra_data]
+        }
         | set { sample_sheet }
 
     // Find existing fastq files
@@ -40,6 +46,7 @@ workflow FASTQ_PREPROCESSING {
         | decompress
         | mix(files.gz)
         | flatten
+        | filter { it.name.matches('.*[-_][RL][12][.-_].*') } // only keep R1/R2/L1/L2 files. I1/I2 are typically the index
         | set { flat_fastq_list }
 
     // Downsize fastq for faster runs
