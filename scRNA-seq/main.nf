@@ -143,7 +143,7 @@ process run_velocyto {
 		fi
 
 		if ! test -f $cellRanger_out/velocyto/*.loom; then
-  			velocyto run10x -@ `nproc` $cellRanger_out ${launchDir}/work/genes.gtf
+  			velocyto run10x -@ ${task.cpus} $cellRanger_out ${launchDir}/work/genes.gtf
 			
 			if ls $cellRanger_out/velocyto/*.loom 1> /dev/null 2>&1; then
 				file_size=\$(du -h $cellRanger_out/velocyto/*.loom | cut -f1)

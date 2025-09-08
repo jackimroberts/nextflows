@@ -44,7 +44,7 @@ process get_fastq {
 		echo "====== GET_FASTQ ======"
 		echo "====== PROCESS_SUMMARY"
 
-		sh ${projectDir}/../bin/get_files.sh "${input_file_source}" "${sample_table_file}" "${launchDir}"
+		sh ${projectDir}/../bin/get_files.sh "${input_file_source}" "${sample_table_file}" "${launchDir}" "${task.cpus}"
 		"""
 }
 

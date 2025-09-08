@@ -37,7 +37,7 @@ workflow {
           		fastq_file.name.startsWith(sample_id + "_")
       		}
       		| map { sample_id, sample_name, condition, extra_data, fastq_file ->
-          		def run_part = fastq_file.name.replaceAll("^${sample_id}_", "").replaceAll("[-_][LR][12][.-_].*", "")
+          		def run_part = fastq_file.name.replaceAll("^${sample_id}_", "").replaceAll("[-_.][LR][12][.-_].*", "")
           		def meta = [id: sample_id, name: sample_name, condition: condition, run: run_part, extra: extra_data]
           		[[meta.id, meta.run], meta, fastq_file]
       		}
@@ -74,6 +74,7 @@ workflow {
                 | mix( bam_branches.single )
                 | filter_bams
 		| dedup_umi
+		| dedup_qc
 		| set { filtered_bams }
 
 	// Count features in each sample
@@ -134,8 +135,8 @@ process fastqc1 {
 		echo "====== PROCESS_SUMMARY"
 		
 		#QC
-		fastqc -T \$(nproc) -f fastq ${r1}
-		#fastqc -T \$(nproc) -f fastq ${r2}
+		fastqc -T ${task.cpus} -f fastq ${r1}
+		fastqc -T ${task.cpus} -f fastq ${r2}
 		"""
 }
 
@@ -161,8 +162,8 @@ process fastqc2 {
 		echo "====== PROCESS_SUMMARY"
 		
 		#QC
-		#fastqc -T \$(nproc) -f fastq ${meta.id}_${meta.run}.extracted.R1.fastq.gz
-		#fastqc -T \$(nproc) -f fastq ${meta.id}_${meta.run}.extracted.R2.fastq.gz
+		fastqc -T ${task.cpus} -f fastq ${meta.id}_${meta.run}.extracted.R1.fastq.gz
+		fastqc -T ${task.cpus} -f fastq ${meta.id}_${meta.run}.extracted.R2.fastq.gz
 		"""
 }
 
@@ -219,14 +220,10 @@ process dedup_umi {
 	input:
 		tuple val(meta), path(bam)
 	output:
-		tuple val(meta), path("${meta.name}.umidedup.bam")
+		tuple val(meta), path("${meta.name}.umidedup.bam"), path(bam)
 	script:
 		"""
           	#!/bin/bash
-
-		# load module
-		module load umi-tools
-		#module load samtools
 
 		echo "====== PROCESS_SUMMARY"
 		echo "====== DEDUP_UMI ======"
@@ -237,19 +234,47 @@ process dedup_umi {
 
 		echo "=== removing duplicated umi from ${meta.name}"
 
-		umi_tools dedup -stdin=$bam --paired --output-stats=deduplicated \\
+		umi_tools dedup -I $bam --paired --output-stats=deduplicated \\
 			-S ${meta.name}.umidedup.bam
 
-		# read count summary
-		#initial_reads=\$(samtools view -c $bam)
-		#final_reads=\$(samtools view -c ${meta.name}.umidedup.bam)
-		#echo "Initial reads: \$initial_reads"
-		#echo "Reads retained: \$final_reads"
-		#echo "Total reads removed: \$((\$initial_reads - \$final_reads))"
-		#echo "Retention rate: \$(echo "scale=2; \$final_reads * 100 / \$initial_reads" | bc)%"
 
 		"""
 }
+/*
+ * deduplicate with umi
+ * originally bundled with dedup_umi but modules and containers aren't compatible
+ */
+process dedup_qc {
+	input:
+		tuple val(meta), path(dedup_bam), path(bam)
+	output:
+		tuple val(meta), path(dedup_bam)
+	script:
+		"""
+          	#!/bin/bash
+
+		# load module
+		module load samtools
+
+		echo "====== PROCESS_SUMMARY"
+		echo "====== DEDUP_QC ======"
+		echo "Strategy: Count after DEDUP_UMI"
+		echo "====== DEDUP_QC ======"
+		echo "====== PROCESS_SUMMARY"
+
+		echo "=== deduplicated ${meta.name}"
+
+		# read count summary
+		initial_reads=\$(samtools view -c $bam)
+		final_reads=\$(samtools view -c $dedup_bam)
+		echo "Initial reads: \$initial_reads"
+		echo "Reads retained: \$final_reads"
+		echo "Total reads removed: \$((\$initial_reads - \$final_reads))"
+		echo "Retention rate: \$(echo "scale=2; \$final_reads * 100 / \$initial_reads" | bc)%"
+
+		"""
+}
+
 
 /*
  * adapter trimming
@@ -281,7 +306,7 @@ process adapter_trim {
 
 		echo "=== trimming ${meta.id}_${meta.run}"
 
-		cutadapt -O 1 --nextseq-trim=20 -m 1 -a \$adaptf -A \$adaptr -j \$(nproc) \\
+		cutadapt -O 1 --nextseq-trim=20 -m 1 -a \$adaptf -A \$adaptr -j ${task.cpus} \\
 			-o ${meta.id}_${meta.run}.1.fq -p ${meta.id}_${meta.run}.2.fq \\
 			$fastqs > cutadapt.log
 		
@@ -296,12 +321,12 @@ process adapter_trim {
 		echo "\$read_count paired reads after trimming"
 		
 		#QC
-		fastqc -T \$(`nproc`) -f fastq ${meta.id}_${meta.run}.1.fq
-		fastqc -T \$(`nproc`) -f fastq ${meta.id}_${meta.run}.2.fq
+		fastqc -T ${task.cpus} -f fastq ${meta.id}_${meta.run}.1.fq
+		fastqc -T ${task.cpus} -f fastq ${meta.id}_${meta.run}.2.fq
 
 		# %rRNA and species using fastq screen
 		${params.fastq_screen} --conf ${params.fastq_screen_config} \\
-			--threads \$(nproc) --subset 1000000 ${meta.id}_${meta.run}.1.fq
+			--threads ${task.cpus} --subset 1000000 ${meta.id}_${meta.run}.1.fq
 		"""
 }
 
@@ -347,7 +372,7 @@ process star_align {
 
 		STAR --genomeDir ${params.transcriptome_index} \\
 			--readFilesIn ${r1} ${r2} \\
-			--runThreadN \$(`nproc`) \\
+			--runThreadN ${task.cpus} \\
 			--twopassMode ${params.star.twopassMode} \\
 			--outSAMtype ${params.star.outSAMtype} \\
 			--outBAMsortingBinsN ${params.star.outBAMsortingBinsN} \\
@@ -359,13 +384,13 @@ process star_align {
 		mv Aligned.sortedByCoord.out.bam ${meta.id}_${meta.run}.raw.bam
 
 		# rename for multiqc ID parsing
-		mv Log.final.out ${meta.id}_${meta.run}.Log.final.out
+		mv Log.out ${meta.id}_${meta.run}.Log.final.out
 	
 		bam_count=\$(samtools view -c ${meta.id}_${meta.run}.raw.bam)
 		echo "${meta.id}_${meta.run}.raw.bam: \$bam_count reads aligned"
 
 		# QC
-		rsem-calculate-expression --paired-end -p \$(`nproc`) \\
+		rsem-calculate-expression --paired-end -p ${task.cpus} \\
 			--alignments --strandedness reverse --no-bam-output \\
    			Aligned.toTranscriptome.out.bam ${params.rsem_index} ${meta.id}_${meta.run}
 		"""
@@ -418,7 +443,7 @@ process filter_bams {
 	script:
 		"""
 		sh ${projectDir}/bin/filter_bams.sh $bam ${meta.name} \\
-			${params.genome_blacklist} ${params.filter.flag}
+			${params.genome_blacklist} ${params.filter.flag} ${task.cpus}
 		"""
 }
 
@@ -454,9 +479,9 @@ process count_features {
 
 		# Count reads overlapping peaks using featureCounts
 				
-		featureCounts -T \$(`nproc`) ${params.counts} -a ${params.gene_models} \\
+		featureCounts -T ${task.cpus} ${params.counts} -a ${params.gene_models} \\
 			-o ${meta.name}.counts $bam
-		featureCounts -T \$(`nproc`) ${params.counts} -a ${params.gene_models} \\
+		featureCounts -T ${task.cpus} ${params.counts} -a ${params.gene_models} \\
 			-o ${meta.name}.biotypes -g gene_biotype $bam
 
 		# Total counts from featureCounts method (sum column 7, skip header lines)
@@ -467,6 +492,8 @@ process count_features {
 
 /*
  * Run a basic DESeq analysis
+ * contains initial pipeline
+ * can edit .Rmd in output folder and run with -resume to use edited parameters
  */
 process run_DESeq {
 	publishDir 'output', mode: 'copy'
@@ -485,12 +512,17 @@ process run_DESeq {
 		echo "====== RUN_DESEQ ======"
 		echo "Strategy: Generate basic DESeq2 analysis"
 		echo "\$(R --version)"
+		echo "edit analysis output/.Rmd and re-run with -resume"
 		echo "====== RUN_DESEQ ======"
 		echo "====== PROCESS_SUMMARY"
 
+		if ! test -f ${launchDir}/output/DESeq_analysis.Rmd; then
+  			cp ${projectDir}/bin/DESeq_analysis.Rmd ${launchDir}/output/DESeq_analysis.Rmd
+		fi
+
 		echo "=== Running DESeq analysis on collected count data"
 
-		Rscript -e "rmarkdown::render('${projectDir}/bin/DESeq_analysis.Rmd', \\
+		Rscript -e "rmarkdown::render('${lauchDir}/output/DESeq_analysis.Rmd', \\
 			params=list(count_data='${count_data}', database='${params.database}'))"
 		"""
 }

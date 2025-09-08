@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Note: blacklist filtering is handled in filter_bams process
-NCPU=`nproc`
+NCPU=${1:-1}  # Use first argument as cpus, default to 1
 
 multirep_macs2_pipeline.pl \
 --nodedup \

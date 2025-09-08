@@ -198,7 +198,7 @@ process bowtie_align {
 		echo "====== PROCESS_SUMMARY"
 
 		echo "=== aligning $r1/.2.fq" 
-		bowtie2 --local --very-sensitive --no-mixed --no-discordant -p \$(nproc) \\
+		bowtie2 --local --very-sensitive --no-mixed --no-discordant -p ${task.cpus} \\
 			-x ${params.genome_index} -1 ${r1} -2 ${r2} \\
 			2> bowtie.log | \\
 			samtools view -bS -o ${meta.id}_${meta.run}.raw.bam
@@ -258,7 +258,7 @@ process filter_bams {
 		tuple val(meta), path('*.filtered.bam')
 	script:
 		"""
-		sh ${projectDir}/bin/filter_bams.sh $bam ${meta.name} ${params.genome_blacklist}
+		sh ${projectDir}/bin/filter_bams.sh $bam ${meta.name} ${params.genome_blacklist} ${task.cpus}
 		"""
 }
 
@@ -571,7 +571,7 @@ process run_multimacs {
 		echo "====== RUN_MULTIMACS ======"
 		echo "====== PROCESS_SUMMARY"
 
-		${launchDir}/output/multimacs_command.sh
+		${launchDir}/output/multimacs_command.sh ${task.cpus}
 		"""
 }
 

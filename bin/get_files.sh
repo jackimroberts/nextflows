@@ -11,11 +11,12 @@
 ## ---------------------------
 ##
 ## Usage:
-##	./get_files.sh <input_sources> <sample_table> <launch_dir>
+##	./get_files.sh <input_sources> <sample_table> <launch_dir> <cpus>
 ##	
 ##	input_sources: Comma-separated list of sources (gnomex, CoreBrowser, UCSF:password, SRA)
 ##	sample_table: Path to sample table file (required for SRA downloads)
 ##	launch_dir: Launch directory path (for locating core_links file)
+##	cpus: Number of CPU threads (defaults to 1 if not provided)
 ##
 ## ---------------------------
 ##
@@ -31,6 +32,7 @@
 input_sources="$1"
 sample_table="$2"
 launch_dir="$3"
+cpus="${4:-1}"  # Use provided cpus or default to 1
 
 ## Load required modules
 module load parallel
@@ -51,14 +53,14 @@ for source in "${SOURCES[@]}"; do
 		# portion of command to execute
 		fdt_commands="${source##*.jar}"
 		# execute with parallel streams
-		$FDT -P $(nproc) $fdt_commands
+		$FDT -P $cpus $fdt_commands
 
 	elif [[ "$source" == "CoreBrowser" ]] && [[ -f "${launch_dir}/core_links" ]]; then
 		echo "=== downloading fastq files from Utah core browser via aria"
 		echo "Processing source: $source"
 		module load aria2
 
-		aria2c -i "${launch_dir}/core_links" -j $(nproc) -x 16
+		aria2c -i "${launch_dir}/core_links" -j $cpus -x 16
 
 	elif [[ "$source" == *":"* ]]; then
 		echo "=== downloading fastq files from UCSF core"
@@ -70,7 +72,7 @@ for source in "${SOURCES[@]}"; do
 
 		# use lftp for parallel transfer
 		lftp -u hiseq_user,"$password" sftp://fastq.ucsf.edu <<-EOF
-			set cmd:parallel $(nproc)
+			set cmd:parallel $cpus
 			set net:max-retries 3
 			cd $directory
 			mget *
@@ -86,7 +88,7 @@ for source in "${SOURCES[@]}"; do
 		# Extract SRA IDs (skip comments/blank lines, look for SRR pattern)
       		grep -v '^#' "$sample_table" | grep -v '^[[:space:]]*$' | \
       		grep -oE 'SRR[0-9]+' | \
-		parallel -j$(nproc) \
+		parallel -j$cpus \
 			'echo "Downloading {}..."; prefetch {} && fasterq-dump {} --split-3 --gzip --skip-technical && \
 				echo "Completed {}" || echo "FAILED: {}"'
 	

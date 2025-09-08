@@ -11,11 +11,12 @@
 ## ---------------------------
 ##
 ## Usage:
-##	./filter_bams.sh <filepath> <sample_id> <blacklist>
+##	./filter_bams.sh <filepath> <sample_id> <blacklist> <cpus>
 ##	
 ##	filepath: Path to input BAM file
 ##	sample_id: Sample identifier
 ##	blacklist: Path to blacklist BED file (optional)
+##	cpus: Number of CPU threads
 ##
 ## ---------------------------
 ##
@@ -30,6 +31,7 @@
 filepath=$1
 sample=$2
 blacklist=$3
+cpus=$4
 
 ## Load required modules
 module load samtools
@@ -60,16 +62,16 @@ echo "$unaligned_reads : unaligned"
 echo "$secondary_reads : secondary"
 
 ## Sort BAM file by name for fixmate
-samtools sort -n -@ $(nproc) $filepath -o $sample.tmp
+samtools sort -n -@ $cpus $filepath -o $sample.tmp
 
 ## Run fixmate to fill in mate coordinates and insert size fields
 samtools fixmate -m $sample.tmp $sample.fixmate.bam
 
 ## Sort by coordinate for markdup
-samtools sort -@ $(nproc) $sample.fixmate.bam -o $sample.sorted.bam
+samtools sort -@ $cpus $sample.fixmate.bam -o $sample.sorted.bam
 
 ## Mark duplicates including optical duplicates using samtools
-samtools markdup -d 2500 -@ $(nproc) $sample.sorted.bam $sample.dedup.bam
+samtools markdup -d 2500 -@ $cpus $sample.sorted.bam $sample.dedup.bam
 
 ## Count duplicates
 total_after_dedup=$(samtools view -c $sample.dedup.bam)
@@ -94,7 +96,7 @@ mito_reads=$(samtools idxstats $sample.dedup.bam | grep -E '(MT|chrM|chrMT)' | a
 echo "$mito_reads : mitochondrial"
 
 ## Filter out duplicates, unaligned, secondary alignments, and chrM
-samtools view -@ $(nproc) -b -F 3332 $sample.dedup.bam $CHROMS > $sample.filt.bam
+samtools view -@ $cpus -b -F 3332 $sample.dedup.bam $CHROMS > $sample.filt.bam
 
 ## Count reads after filtering
 reads_after_filter=$(samtools view -c $sample.filt.bam)
