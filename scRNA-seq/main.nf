@@ -30,30 +30,14 @@ ${getSharedHelp()}
 
 workflow {
 
-	// FASTQ preprocessing (sample table creation, download, decompress, miniaturize)
+	// FASTQ preprocessing (sample table creation, download, decompress, miniaturize, fastq pairing/grouping)
 	FASTQ_PREPROCESSING(
 		Channel.fromPath(params.sample_table),
 		params.fastq_source, 
 		params.miniaturize
 	)
 	
-	sample_sheet = FASTQ_PREPROCESSING.out.sample_sheet
-	fastq_list = FASTQ_PREPROCESSING.out.fastq_files
-	
-	// pair up fastq files by sample id
-	sample_sheet
-		| combine ( fastq_list )
-		| filter { sample_id, sample_name, condition, extra_data, fastq_file ->
-			fastq_file.name.startsWith(sample_id + "_")
-		}
-      		| map { sample_id, sample_name, condition, extra_data, fastq_file ->
-          		def meta = [id: sample_id, name: sample_name, condition: condition, extra: extra_data]
-          		[meta.id, meta, fastq_file]
-      		}
-      		| groupTuple()  // Group by id
-      		| map { id, meta, fastq_files ->
-          		[meta[0], fastq_files]
-      		}
+	grouped_fastqs = FASTQ_PREPROCESSING.out.grouped_fastqs
 		| run_cellranger // run pipeline for individual samples
 
 	// Run velocyto splice counting if true

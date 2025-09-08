@@ -1,6 +1,6 @@
 /*
  * FASTQ preprocessing subworkflow
- * Handles sample table creation, file discovery, downloading, decompression, and miniaturization
+ * Handles sample table creation, file discovery, downloading, decompression, miniaturization, and fastq file pairing/grouping by sample and run
  */
 
 include { make_sample_table; get_fastq; decompress; miniaturize } from '../modules/shared_processes.nf'
@@ -58,8 +58,24 @@ workflow FASTQ_PREPROCESSING {
         flat_fastq_list
             | set { fastq_list }
     }
+
+    // Pair up fastq files by sample id and run, keeping runs separate
+    sample_sheet
+        | combine(fastq_list)
+        | filter { sample_id, sample_name, condition, extra_data, fastq_file ->
+            fastq_file.name.startsWith(sample_id + "_")
+        }
+        | map { sample_id, sample_name, condition, extra_data, fastq_file ->
+            def run_part = fastq_file.name.replaceAll("^${sample_id}_", "").replaceAll("[-_.][LR][12][.-_].*", "")
+            def meta = [id: sample_id, name: sample_name, condition: condition, run: run_part, extra: extra_data]
+            [[meta.id, meta.run], meta, fastq_file]
+        }
+        | groupTuple()  // Group by the [id, run] tuple
+        | map { id_run_tuple, meta_list, fastq_files ->
+            [meta_list[0], fastq_files]
+        }
+        | set { grouped_fastqs }
     
     emit:
-    sample_sheet = sample_sheet
-    fastq_files = fastq_list
+    grouped_fastqs = grouped_fastqs
 }

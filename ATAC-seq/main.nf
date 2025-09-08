@@ -20,31 +20,14 @@ ${getSharedHelp()}
 
 workflow {
 
-	// FASTQ preprocessing (sample table creation, download, decompress, miniaturize)
+	// FASTQ preprocessing (sample table creation, download, decompress, miniaturize, fastq pairing/grouping)
 	FASTQ_PREPROCESSING(
 		Channel.fromPath(params.sample_table),
 		params.fastq_source, 
 		params.miniaturize
 	)
 	
-	sample_sheet = FASTQ_PREPROCESSING.out.sample_sheet
-	fastq_list = FASTQ_PREPROCESSING.out.fastq_files
-		
-	// pair up fastq files by sample id and run, keeping runs separate
- 	sample_sheet
-     		| combine(fastq_list)
-      		| filter { sample_id, sample_name, condition, extra_data, fastq_file ->
-          		fastq_file.name.startsWith(sample_id + "_")
-      		}
-      		| map { sample_id, sample_name, condition, extra_data, fastq_file ->
-          		def run_part = fastq_file.name.replaceAll("^${sample_id}_", "").replaceAll("[-_][LR][12][.-_].*", "")
-          		def meta = [id: sample_id, name: sample_name, condition: condition, run: run_part, extra: extra_data]
-          		[[meta.id, meta.run], meta, fastq_file]
-      		}
-      		| groupTuple()  // Group by the [id, run] tuple
-      		| map { id_run_tuple, meta_list, fastq_files ->
-          		[meta_list[0], fastq_files]
-      		}
+	grouped_fastqs = FASTQ_PREPROCESSING.out.grouped_fastqs
 	// Trim and align individual sequencing runs
 		| adapter_trim 
 		| bowtie_align
@@ -252,13 +235,15 @@ process merge_run_bams {
  * filter bams for duplicates, unaligned, mitochondria, blacklist
  */
 process filter_bams {
+	params.filter = [flag: 3332]
 	input:
 		tuple val(meta), path(bam)
 	output:
 		tuple val(meta), path('*.filtered.bam')
 	script:
 		"""
-		sh ${projectDir}/bin/filter_bams.sh $bam ${meta.name} ${params.genome_blacklist} ${task.cpus}
+		sh ${projectDir}/../bin/filter_bams.sh $bam ${meta.name} \\
+			${params.genome_blacklist} ${params.filter.flag} ${task.cpus}
 		"""
 }
 
