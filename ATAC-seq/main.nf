@@ -1,13 +1,19 @@
 #!/usr/bin/env nextflow
 
 // Include subworkflows and shared help
-include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
-include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
 include { getSharedHelp } from '../modules/shared_help'
+include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
+include { MERGE_SEQUENCING_RUNS } from '../subworkflows/merge_sequencing_runs.nf'
+include { CREATE_SCALED_BIGWIGS } from '../subworkflows/create_scaled_bigwigs.nf'
+include { adapter_trim; filter_bams } from '../modules/shared_processes.nf'
+include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
 
 params.miniaturize = false
 params.fastq_source = true
 params.sample_table = "*.txt"
+
+//ATAC-specific. Does not remove unmated. Removes, duplicate, unaligned, and secondary.
+params.filter = [flag: 3332]
 
 params.help = false
 if (params.help) {
@@ -31,28 +37,13 @@ workflow {
 	// Trim and align individual sequencing runs
 		| adapter_trim 
 		| bowtie_align
-	// Combine samples by sample id
-		| map { meta, bam_file ->
-			[meta.id, meta, bam_file]
-		}
-		| groupTuple
-		| map { sample_id, meta_list, bam_files ->
-			[meta_list[0], bam_files]
-	 	}
-	// Separate samples with single or multiple sequencing runs
-		| branch {
-                        multiple: it[1].size() > 1
-                        single: it[1].size() == 1
-                }
-                | set { bam_branches }
-
-        // Only merge files from multiple runs
-	// Avoids unnecessary SLURM jobs
-        bam_branches.multiple 
-		| merge_run_bams
-        // Combine both streams back together
-                | mix( bam_branches.single )
-                | filter_bams
+	
+	// Merge samples across sequencing runs
+	MERGE_SEQUENCING_RUNS(bowtie_align.out)
+	
+	// Filter merged BAM files
+	merged_bams = MERGE_SEQUENCING_RUNS.out.merged_bams
+		| filter_bams
 		| set { filtered_bams }
 
 	// Call peaks from each sample
@@ -69,22 +60,8 @@ workflow {
 	// DE analysis
 	// group by condition
 
-	// Calculate read depth for each bam
-	filtered_bams
-		| measure_depth
-		| map { meta, bam_file, depth ->
-          		def depth_value = depth.trim().split('\n').last() as Integer
-   
-          		[meta + [depth: depth_value], bam_file]
-		}
-		| set { filtered_bams_with_depth }
-    	// Find minimum depth across all samples for scaling
-  	filtered_bams_with_depth
-      		| map { meta, bam_file -> meta.depth }
-      		| min()
-  	// Combine for bigwig creation
-      		| combine(filtered_bams_with_depth)
-      		| bam_to_bigwig
+	// Create scaled bigwig files for visualization
+	CREATE_SCALED_BIGWIGS(filtered_bams)
 	
 	// run Tim's pipeline
 	filtered_bams
@@ -105,52 +82,6 @@ workflow.onComplete {
 	WorkflowCompletion()
 }
 
-
-/*
- * adapter trimming
- */
-process adapter_trim {
-	input:
-		tuple val(meta), path(fastqs)
-	output:
-		tuple val(meta), path('*fq')
-	script:
-		"""
-          	#!/bin/bash
-          	# TruSeq adapters for Active Motif ATAC-seq
-		adaptf=CTGTCTCTTATACACATCT
-		adaptr=CTGTCTCTTATACACATCT
-
-		# load cutadapt module
-		module load cutadapt
-
-		echo "====== PROCESS_SUMMARY"
-		echo "====== ADAPTER_TRIM ======"
-		echo "Strategy: Remove adapters and low quality bases from reads"
-		echo "trimmed with cutadapt \$(cutadapt --version)"
-		echo "-O 1 --nextseq-trim=20 -m 1"
-		echo "forward adapter: \$adaptf"
-		echo "and reverse: \$adaptr"
-		echo "====== ADAPTER_TRIM ======"
-		echo "====== PROCESS_SUMMARY"
-
-		echo "=== trimming ${meta.id}_${meta.run}"
-
-		cutadapt -O 1 --nextseq-trim=20 -m 1 -a \$adaptf -A \$adaptr \\
-			-o ${meta.id}_${meta.run}.1.fq -p ${meta.id}_${meta.run}.2.fq \\
-			$fastqs > cutadapt.log
-		
-		# Extract key stats from cutadapt log
-		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' cutadapt.log | head -n -1
-		
-		# Count reads in input files (assuming gzipped)
-		read_count=\$(( \$(gunzip -c ${fastqs[0]} | wc -l) / 4 ))
-		echo "\$read_count paired reads before trimming"
-
-		read_count=\$(( ${meta.id}_${meta.run}.1.fq | wc -l) / 4 ))
-		echo "\$read_count paired reads after trimming"
-		"""
-}
 
 /*
  * alignment with bowtie2
@@ -193,57 +124,6 @@ process bowtie_align {
 		echo "=== Output Files"
 		bam_count=\$(samtools view -c ${meta.id}_${meta.run}.raw.bam)
 		echo "${meta.id}_${meta.run}.raw.bam: \$bam_count reads aligned"
-		"""
-}
-
-/*
- * Combine BAM files from the same sample
- */
-process merge_run_bams {
-	input:
-		tuple val(meta), path(bam_files)
-	output:
-		tuple val(meta), path("${meta.id}.merged.bam")
-	script:
-		"""
-		module load samtools
-		
-		echo "====== PROCESS_SUMMARY"
-		echo "====== MERGE_RUN_BAMS ======"
-		echo "Strategy: Combine BAM files from the same sample across runs"
-		echo "\$(samtools --version | head -1)"
-		echo "====== MERGE_RUN_BAMS ======"
-		echo "====== PROCESS_SUMMARY"
-		
-
-		echo "=== Merging BAM files from multiple runs"
-		for bam in $bam_files; do
-			read_count=\$(samtools view -c \$bam)
-			echo "\$bam: \$read_count aligned reads"
-		done
-
-		samtools merge ${meta.id}.merged.bam $bam_files
-
-		echo "=== Merged bam"
-		merged_count=\$(samtools view -c ${meta.id}.merged.bam)
-		echo "${meta.id}.merged.bam: \$merged_count aligned reads"
-
-		"""
-}
-
-/*
- * filter bams for duplicates, unaligned, mitochondria, blacklist
- */
-process filter_bams {
-	params.filter = [flag: 3332]
-	input:
-		tuple val(meta), path(bam)
-	output:
-		tuple val(meta), path('*.filtered.bam')
-	script:
-		"""
-		sh ${projectDir}/../bin/filter_bams.sh $bam ${meta.name} \\
-			${params.genome_blacklist} ${params.filter.flag} ${task.cpus}
 		"""
 }
 
@@ -427,72 +307,6 @@ process count_under_peaks {
 		
 		# Clean up intermediate files
 		rm ${meta.id}_sorted.bed consensus_peaks.saf
-		"""
-}
-
-/*
- * Calculate bam sizes for scaling
- * append sequencing depth to output
- */
-process measure_depth {
-	input:
-		tuple val(meta), path(bam)
-	output:
-		tuple val(meta), path(bam), stdout
-	script:
-		"""
-		module load samtools
-		
-		echo "====== PROCESS_SUMMARY"
-		echo "====== MEASURE_DEPTH ======"
-		echo "Strategy: Count read pairs for scaling normalization"
-		echo "\$(samtools --version | head -1)"
-		echo "====== MEASURE_DEPTH ======"
-		echo "====== PROCESS_SUMMARY"
-		
-		echo "$bam depth:"
-		## Calculate size for eventual scaling
-		samtools view -f 64 -c $bam
-
-		"""
-}
-
-/*
- * convert bam files to bigwig
- */
-process bam_to_bigwig {
-	publishDir 'output/bigwigs', mode: 'copy'
-	input:
-		tuple val(min_depth), val(meta), path(bam)
-	output:
-		path "*bw"
-	script:
-		"""
-		#!/bin/bash
-		
-		# load required modules - load deeptools first to avoid Python conflicts
-		module purge
-		module load deeptools
-		module load samtools
-
-		echo "====== PROCESS_SUMMARY"
-		echo "====== BAM_TO_BIGWIG ======"
-		echo "Strategy: Convert BAM to normalized BigWig for visualization"
-		echo "deeptools \$(deeptools --version)"
-		echo "\$(samtools --version | head -1)"
-		echo "Scale factor: min_depth/sample_depth"
-		echo "====== BAM_TO_BIGWIG ======"
-		echo "====== PROCESS_SUMMARY"
-
-		# create scale based on depth and minimum depth of all samples
-		scale=\$(echo "scale=5; $min_depth/${meta.depth}" | bc)
-
-		# index bam and generate bigwig
-		samtools index $bam
-		bamCoverage -b $bam --scaleFactor \$scale -o ${meta.name}.bw
-		
-		file_size=\$(du -h "${meta.name}.bw" | cut -f1)
-		echo "Created ${meta.name}.bw: \$file_size"
 		"""
 }
 

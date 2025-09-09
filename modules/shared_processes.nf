@@ -110,3 +110,165 @@ process miniaturize {
 
 		"""
 }
+
+/*
+ * adapter trimming
+ */
+process adapter_trim {
+	input:
+		tuple val(meta), path(fastqs)
+	output:
+		tuple val(meta), path('*fq')
+	script:
+		"""
+          	#!/bin/bash
+          	# TruSeq adapters for Active Motif ATAC-seq
+		adaptf=CTGTCTCTTATACACATCT
+		adaptr=CTGTCTCTTATACACATCT
+
+		# load cutadapt module
+		module load cutadapt
+
+		echo "====== PROCESS_SUMMARY"
+		echo "====== ADAPTER_TRIM ======"
+		echo "Strategy: Remove adapters and low quality bases from reads"
+		echo "trimmed with cutadapt \$(cutadapt --version)"
+		echo "-O 1 --nextseq-trim=20 -m 1"
+		echo "forward adapter: \$adaptf"
+		echo "and reverse: \$adaptr"
+		echo "====== ADAPTER_TRIM ======"
+		echo "====== PROCESS_SUMMARY"
+
+		echo "=== trimming ${meta.id}_${meta.run}"
+
+		cutadapt -O 1 --nextseq-trim=20 -m 1 -a \$adaptf -A \$adaptr -j ${task.cpus} \\
+			-o ${meta.id}_${meta.run}.1.fq -p ${meta.id}_${meta.run}.2.fq \\
+			$fastqs > cutadapt.log
+		
+		# Extract key stats from cutadapt log
+		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' cutadapt.log | head -n -1
+		
+		# Count reads in input files (assuming gzipped)
+		read_count=\$(( \$(gunzip -c ${fastqs[0]} | wc -l) / 4 ))
+		echo "\$read_count paired reads before trimming"
+
+		read_count=\$(( \$(wc -l < ${meta.id}_${meta.run}.1.fq) / 4 ))
+		echo "\$read_count paired reads after trimming"
+		"""
+}
+
+/*
+ * Combine BAM files from the same sample
+ */
+process merge_run_bams {
+	input:
+		tuple val(meta), path(bam_files)
+	output:
+		tuple val(meta), path("${meta.id}.merged.bam")
+	script:
+		"""
+		module load samtools
+		
+		echo "====== PROCESS_SUMMARY"
+		echo "====== MERGE_RUN_BAMS ======"
+		echo "Strategy: Combine BAM files from the same sample across runs"
+		echo "\$(samtools --version | head -1)"
+		echo "====== MERGE_RUN_BAMS ======"
+		echo "====== PROCESS_SUMMARY"
+		
+
+		echo "=== Merging BAM files from multiple runs"
+		for bam in $bam_files; do
+			read_count=\$(samtools view -c \$bam)
+			echo "\$bam: \$read_count aligned reads"
+		done
+
+		samtools merge ${meta.id}.merged.bam $bam_files
+
+		echo "=== Merged bam"
+		merged_count=\$(samtools view -c ${meta.id}.merged.bam)
+		echo "${meta.id}.merged.bam: \$merged_count aligned reads"
+
+		"""
+}
+
+/*
+ * filter bams for duplicates, unaligned, mitochondria, blacklist
+ */
+process filter_bams {
+	input:
+		tuple val(meta), path(bam)
+	output:
+		tuple val(meta), path('*.filtered.bam')
+	script:
+		"""
+		sh ${projectDir}/../bin/filter_bams.sh $bam ${meta.name} \\
+			${params.genome_blacklist} ${params.filter.flag} ${task.cpus}
+		"""
+}
+
+/*
+ * Calculate bam sizes for scaling
+ * append sequencing depth to output
+ */
+process measure_depth {
+	input:
+		tuple val(meta), path(bam)
+	output:
+		tuple val(meta), path(bam), stdout
+	script:
+		"""
+		module load samtools
+		
+		echo "====== PROCESS_SUMMARY"
+		echo "====== MEASURE_DEPTH ======"
+		echo "Strategy: Count read pairs for scaling normalization"
+		echo "\$(samtools --version | head -1)"
+		echo "====== MEASURE_DEPTH ======"
+		echo "====== PROCESS_SUMMARY"
+		
+		echo "$bam depth:"
+		## Calculate size for eventual scaling
+		samtools view -f 64 -c $bam
+
+		"""
+}
+
+/*
+ * convert bam files to bigwig
+ */
+process bam_to_bigwig {
+	publishDir 'output/bigwigs', mode: 'copy'
+	input:
+		tuple val(min_depth), val(meta), path(bam)
+	output:
+		path "*bw"
+	script:
+		"""
+		#!/bin/bash
+		
+		# load required modules - load deeptools first to avoid Python conflicts
+		module purge
+		module load deeptools
+		module load samtools
+
+		echo "====== PROCESS_SUMMARY"
+		echo "====== BAM_TO_BIGWIG ======"
+		echo "Strategy: Convert BAM to normalized BigWig for visualization"
+		echo "deeptools \$(deeptools --version)"
+		echo "\$(samtools --version | head -1)"
+		echo "Scale factor: min_depth/sample_depth"
+		echo "====== BAM_TO_BIGWIG ======"
+		echo "====== PROCESS_SUMMARY"
+
+		# create scale based on depth and minimum depth of all samples
+		scale=\$(echo "scale=5; $min_depth/${meta.depth}" | bc)
+
+		# index bam and generate bigwig
+		samtools index $bam
+		bamCoverage -b $bam --scaleFactor \$scale -o ${meta.name}.bw
+		
+		file_size=\$(du -h "${meta.name}.bw" | cut -f1)
+		echo "Created ${meta.name}.bw: \$file_size"
+		"""
+}
