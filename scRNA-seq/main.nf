@@ -68,7 +68,7 @@ process run_cellranger {
 	input:
 		tuple val(meta), path(fastqs, stageAs: 'fastq_folder/*')
 	output:
-		path "${meta.name}"
+		tuple val(meta), path("${meta.name}")
 	script:
 		"""
 		module load cellranger/8.0.1
@@ -149,7 +149,7 @@ process run_velocyto {
  */
 process seurat_markdown {
 	input:
-		val cellranger_out_paths
+		val collected_cellranger
 	output:
 		stdout
 	script:
@@ -165,7 +165,8 @@ process seurat_markdown {
 		fi
 
 		module load R
-		Rscript -e "rmarkdown::render('${launchDir}/output/initial_analysis.Rmd',param=list(args=c('${cellranger_out_paths}')))"
+		Rscript -e "rmarkdown::render('${launchDir}/output/initial_analysis.Rmd', \\
+			params=list(collected_cellranger='${collected_cellranger}', transcriptome='${params.cellRanger_transcriptome}', velocity='${params.run_velocyto}'))"
 	
 		"""
 }

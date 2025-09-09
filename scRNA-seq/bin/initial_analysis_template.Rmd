@@ -4,7 +4,9 @@ author: "Jacqueline Roberts, PhD"
 date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
 output: html_document
 params:
- args: ''	
+ collected_cellranger: ''
+ transcriptome: ''
+ velocity: false
 ---
 
 ```{r setup, include=FALSE}
@@ -13,39 +15,92 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE,
                       cache = TRUE, cache.lazy = FALSE)
 
 if (!require("pacman")) install.packages("pacman")
-#if (!require("SeuratWrappers")) remotes::install_github('satijalab/seurat-wrappers')
-#if (!require("velocyto.R")) remotes::install_github("velocyto-team/velocyto.R")
-#if (!require("hdf5r")) install.packages("hdf5r", configure.args="--with-hdf5=/usr/bin/h5cc")
-#if (!require("presto")) devtools::install_github('immunogenomics/presto')
 
 pacman::p_load(Seurat,sctransform,dplyr,tidyr,ggplot2,cowplot,qs,
-	tidyverse,stringr,velocyto.R,SeuratWrappers,glmGamPoi)
+	tidyverse,stringr,velocyto.R,SeuratWrappers,glmGamPoi,knitr)
 
 set.seed(1234)
 options(future.globals.maxSize=16777216000000)
 
-#read in nextflow channel inputs
-cellranger_filepath <- params$args[1]
+# read in nextflow channel inputs
+collected_cellranger <- params$collected_cellranger
+transcriptome <- params$transcriptome
+velocity <- as.logical(params$velocity)
 
-#create directories for output
-dir.create("seurat_results")
+# create directories for output
+save_dir <- "seurat_results"
+dir.create(save_dir)
+dir.create(file.path(save_dir, "plots"))
 ```
 
-```{r create_seurat_objects}
-#split paths from nextflow channel to paths
-file_paths<-strsplit(gsub('\\[|\\]','',cellranger_filepath[1]),split=", ")[[1]]
+### Transcriptome used: `r transcriptome`
 
-#set up to create seurat objects, filter, and compile into list
+### Parse the nextflow channel to extract sample info and cellranger paths
+
+```{r parse_nextflow_channel}
+# initialize metadata and cellranger paths
+metadata <- tibble()
+cellranger_paths <- c()
+
+# process each tuple (sample) from the collected channel
+for (sample_tuple in collected_cellranger) {
+  # extract metadata from first element of tuple
+  meta <- sample_tuple[[1]]
+  
+  # create metadata row with id, name, condition, and any additional columns
+  meta_row <- tibble(
+    id = meta[[1]],
+    name = meta[[2]],
+    condition = meta[[3]]
+  )
+  
+  # add extra column if it exists
+  if (length(meta) > 3) {
+    meta_row$extra <- meta[[4]]
+  }
+  
+  # append to metadata table
+  metadata <- bind_rows(metadata, meta_row)
+  
+  # extract cellranger output path (second element of tuple)
+  cellranger_paths <- c(cellranger_paths, sample_tuple[[2]])
+}
+
+# separate extra column by tabs if it exists
+if ("extra" %in% colnames(metadata)) {
+  metadata <- separate(metadata, extra, sep = "\t", fill = "right")
+}
+
+kable(metadata, caption = "Sample Metadata")
+write_tsv(metadata, file.path(save_dir, "sample_metadata.tsv"))
+
+```
+
+### Create seurat object and determine quality cut-offs
+
+```{r create_seurat_objects}
+# set up to create seurat objects, filter, and compile into list
 mito_cutoff <- 5
-seurat_objects<-list()
-for (path in file_paths){
-	#get sample name from path
-	sample_name <- sub(".*/","",path)
-	print(sample_name)
+seurat_objects <- list()
+
+for (i in seq_along(cellranger_paths)) {
+	path <- cellranger_paths[i]
+	sample_name <- metadata$name[i]
+	print(paste("Processing sample:", sample_name))
 	
-	#generate object and filter
+	# generate object and filter
 	obj <- Read10X_h5(paste0(path,"/outs/filtered_feature_bc_matrix.h5"))
-	obj <- CreateSeuratObject(counts = obj, project = eval(sample_name),min.cells = 10, min.features = 200)
+	obj <- CreateSeuratObject(counts = obj, project = sample_name, min.cells = 10, min.features = 200)
+	
+	# add all metadata columns to seurat object
+	sample_metadata <- metadata[i, ]
+	for (col_name in colnames(sample_metadata)) {
+		if (col_name != "name") {  # skip name
+			obj[[col_name]] <- sample_metadata[[col_name]]
+		}
+	}
+	
+	# add standard QC metrics
   	obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^mt-")
   	obj[["sex"]] <- PercentageFeatureSet(obj, pattern = c("^Xist|^Tsix"))
   	d <- density(obj$nFeature_RNA)
@@ -63,6 +118,8 @@ for (path in file_paths){
 }
 ```
 
+### Run analysis pipeline and differential expression
+
 ```{r clustering}
 exp <- seurat_objects[[1]]
 if(length(seurat_objects)>1){
@@ -76,39 +133,52 @@ exp <- exp %>%
   RunPCA() %>%
   FindNeighbors(dims = 1:30) %>% 
   RunUMAP(dims = 1:30) %>% 
-  FindClusters(verbose = FALSE)
+  FindClusters(verbose = FALSE) %>% 
+  PrepSCTFindMarkers() %>%
+  Azimuth::RunAzimuth(reference ="mousecortexref")
 
 s.genes <- str_to_title(cc.genes$s.genes)
 g2m.genes <- str_to_title(cc.genes$g2m.genes)
 
 exp <- CellCycleScoring(exp, s.features = s.genes, g2m.features = g2m.genes)
 
-qsave(exp,"seurat_results/scRNAseq.qs")
+qsave(exp, file.path(save_dir, "scRNAseq.qs"))
 
-clust_mark<-exp %>% PrepSCTFindMarkers() %>% FindAllMarkers(only.pos = TRUE)
-write_tsv(clust_mark,"seurat_results/cluster_markers.txt")
+clust_mark<-exp %>% FindAllMarkers(only.pos = TRUE)
+write_tsv(clust_mark, file.path(save_dir, "cluster_markers.txt"))
 
 Idents(exp) <- exp$orig.ident
-sam_mark<-exp %>% PrepSCTFindMarkers() %>% FindAllMarkers(only.pos = TRUE)
-write_tsv(sam_mark,"seurat_results/sample_markers.txt")
+sam_mark<-exp %>% FindAllMarkers(only.pos = TRUE)
+write_tsv(sam_mark, file.path(save_dir, "sample_markers.txt"))
 
+if (length(unique(exp$condition)) < length(unique(exp$orig.ident))){
+  Idents(exp) <- exp$condition
+  sam_mark<-exp %>% FindAllMarkers(only.pos = TRUE)
+  write_tsv(sam_mark, file.path(save_dir, "condition_markers.txt"))
+}
 ```
 
-These plots are used to detect any anomalies in the data that are driving clustering.
+### Plots metrics to detect any anomalies in the data
 
 ```{r initialplots}
-DimPlot(exp)
-DimPlot(exp,group.by = "orig.ident")
+
 DimPlot(exp,split.by = "orig.ident")
 
-DimPlot(exp,group.by = c("orig.ident","Phase"))
-FeaturePlot(exp, features = c("S.Score", "G2M.Score"), pt.size = 0.2)
-FeaturePlot(exp, features = c("percent.mt"), pt.size = 0.2)
-FeaturePlot(exp, features = c("nFeature_RNA", "nCount_RNA"), pt.size = 0.2)
-
+for (idx in colnames(exp@meta.data)){
+  if (is.numeric(exp@meta.data[[idx]])){
+    print(FeaturePlot(exp, features = idx, pt.size = 0.2))
+  }
+  if (is.factor(exp@meta.data[[idx]]) || is.character(exp@meta.data[[idx]])){
+    if (length(unique(exp@meta.data[[idx]])) > 10){
+      print(DimPlot(exp, group.by = idx) + NoLegend())
+    } else {
+      print(DimPlot(exp, group.by = idx, label = FALSE))
+    }
+  }
+}
 ```
 
-And here are plots of the top genes to get a sense of the data
+## Plot highly variable genes
 
 ```{r markerplots}
 #top 10 variable features
@@ -138,55 +208,64 @@ for (i in seq(1,l,4)){
 }
 ```
 
-#```{r create_velocity_objects}
-#pull velocyto data, filter cells, plot
-velo_objects<-list()
-for (path in file_paths){
-	#get sample name from path
-	sample_name <- sub(".*/","",path)
-	print(sample_name)
+### Run and plot velocity if TRUE
+
+```{r create_velocity_objects, eval=velocity}
+# pull velocyto data, filter cells, plot (only if velocity=TRUE)
+velo_objects <- list()
+for (idx in seq_along(cellranger_paths)) {
+	path <- cellranger_paths[idx]
+	sample_name <- metadata$name[idx]
+	print(paste("Processing velocyto for sample:", sample_name))
 	
-	#generate object and filter
-	vel <- ReadVelocity(paste0(path,"/velocyto/",eval(sample_name),".loom"))
-	for(i in 1:length(vel)){
-		rownames(vel[[i]])<-make.unique(rownames(vel[[i]]))
-		colnames(vel[[i]])<-sub(".*:","",sub("x","-1",colnames(vel[[i]])))
+	# generate object and filter
+	vel <- ReadVelocity(paste0(path, "/velocyto/", sample_name, ".loom"))
+	for(j in 1:length(vel)){
+		rownames(vel[[j]]) <- make.unique(rownames(vel[[j]]))
+		colnames(vel[[j]]) <- sub(".*:", "", sub("x", "-1", colnames(vel[[j]])))
 	}
-	vel <- as.Seurat(vel,project = eval(sample_name))
-	vel
-	velo_objects[sample_name[1]] <- vel[,colnames(seurat_objects[sample_name[1]])]
-	velo_objects[sample_name[1]]
+	vel <- as.Seurat(vel, project = sample_name)
+	
+	# filter to cells that exist in the corresponding seurat object
+	velo_objects[[sample_name]] <- vel[, colnames(seurat_objects[[sample_name]])]
 }
 
-exp <- velo_objects[[1]]
-if(length(velo_objects)>1){
+# merge velocity objects
+velo_names <- names(velo_objects)
+exp_velocity <- velo_objects[[velo_names[1]]]
+if(length(velo_objects) > 1){
 	for (i in 2:length(velo_objects)){
-		exp<-merge(exp,velo_objects[[i]])
+		exp_velocity <- merge(exp_velocity, velo_objects[[velo_names[i]]])
 	}
 }
 
-DefaultAssay(exp) <- "spliced"
-exp <- exp %>% 
+DefaultAssay(exp_velocity) <- "spliced"
+exp_velocity <- exp_velocity %>% 
   SCTransform(verbose = FALSE) %>% 
   RunPCA() %>%
   FindNeighbors(dims = 1:30) %>% 
   RunUMAP(dims = 1:30)
 
-exp <- RunVelocity(object = exp, deltaT = 1, kCells = 25, fit.quantile = 0.02) 
-Idents(exp)<-exp$orig.ident
+exp_velocity <- RunVelocity(object = exp_velocity, deltaT = 1, kCells = 25, fit.quantile = 0.02) 
+Idents(exp_velocity) <- exp_velocity$orig.ident
 
-qsave(exp,"seurat_results/velocity.qs")
+qsave(exp_velocity, file.path(save_dir, "velocity.qs"))
 
-names(x = ident.colors) <- levels(x = exp)
-cell.colors <- ident.colors[Idents(object = exp)]
-names(x = cell.colors) <- colnames(x = exp)
-show.velocity.on.embedding.cor(emb = Embeddings(object = exp, reduction = "umap"), 
-                               vel = Tool(object = exp, slot = "RunVelocity"), n = 200, 
+# create color palette for velocity plot
+n_idents <- length(levels(Idents(exp_velocity)))
+ident.colors <- rainbow(n_idents)
+names(ident.colors) <- levels(Idents(exp_velocity))
+cell.colors <- ident.colors[Idents(exp_velocity)]
+names(cell.colors) <- colnames(exp_velocity)
+show.velocity.on.embedding.cor(emb = Embeddings(object = exp_velocity, reduction = "umap"), 
+                               vel = Tool(object = exp_velocity, slot = "RunVelocity"), n = 200, 
                                scale = "sqrt", cell.colors = ac(x = cell.colors, alpha = 0.5), 
                                cex = 0.8, arrow.scale = 3, show.grid.flow = TRUE, 
                                min.grid.cell.mass = 0.5, grid.n = 40, arrow.lwd = 1, 
                                do.par = FALSE, cell.border.alpha = 0.1)
-#```
+```
+
+### Session Information
 
 ```{r end}
 sessionInfo()
