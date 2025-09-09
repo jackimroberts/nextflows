@@ -4,7 +4,8 @@ author: "Jacqueline Roberts, PhD"
 date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
 output: html_document
 params:
- args: ''	
+ collected_counts: ''
+ database: ''
 ---
 
 ```{r setup, include=FALSE}
@@ -14,153 +15,329 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE,
 
 if (!require("pacman")) install.packages("pacman")
 
-pacman::p_load(tidyverse,DESeq2,pheatmap,biomaRt,RColorBrewer)
+pacman::p_load(tidyverse,DESeq2,pheatmap,biomaRt,
+               RColorBrewer,knitr,clusterProfiler,msigdbr,fgsea,openxlsx)
 
 set.seed(1234)
 
-#read in nextflow channel inputs
-metadata <- params$args[1]
-count_paths <- params$args[2]
-database <- params$args[3]
+# read in nextflow channel inputs
+collected_counts <- params$collected_counts
+database <- params$database
 
 #create directories for output
-dir.create("DESeq_results")
-dir.create("DESeq_results/plots")
+save_dir=c("DESeq_results")
+dir.create(save_dir)
+dir.create(file.path(save_dir,"plots"))
 ```
 
-### I have aligned to $database
+### I have aligned to `r database`
 
-### Here I'm loading in the counts
-```{r input}
-metadata
-count_paths
-database
-```
+### First, parse the nextflow channel to generate DESeq input
 
-#```{r get_counts}
-#get file path names
+```{r parse_nextflow_channel}
+#nextflow collected channel
+collected_counts
 
-i<-file_paths[1]
-counts<-read_tsv(paste0(i,"/",i,".counts"),skip=1)[,c(1,7)]
-colnames(counts)[2]<-i
-for (i in file_paths[-c(1)]){
-  x<-read_tsv(paste0(i,"/",i,".counts"),skip=1)[,c(1,7)]
-  colnames(x)[2]<-i
-  counts<-inner_join(counts,x)
+# initialize metadata and counts tables
+metadata <- tibble()
+counts <- tibble()
+
+# process each tuple (sample) from the collected channel
+for (sample_tuple in collected_counts) {
+  # extract metadata from first element of tuple
+  meta <- sample_tuple[[1]]
+  
+  # create metadata row with id, name, condition, and any additional columns
+  meta_row <- tibble(
+    id = meta[[1]],
+    name = meta[[2]],
+    condition = meta[[3]]
+  )
+
+  if (length(meta) > 3) {
+    meta_row$extra <- meta[[4]]
+  }
+  
+  # append to metadata table
+  metadata <- bind_rows(metadata, meta_row)
+  
+  # read count file (second element of tuple) and extract gene IDs and counts
+  sample_counts <- read_tsv(sample_tuple[[2]], skip = 1) %>%
+    select(Geneid, count = last_col())
+  
+  # if this is the first sample, initialize counts table
+  if (nrow(counts) == 0) {
+    counts <- sample_counts %>%
+      rename(!!meta$name := count)
+  } else {
+    # append counts as new column
+    counts <- counts %>%
+      left_join(sample_counts %>% rename(!!meta$name := count), by = "Geneid")
+  }
+}
+# separate extra column by tabs if it exists
+if ("extra" %in% colnames(metadata)) {
+  metadata <- separate(metadata, extra, sep = "\t", fill = "right")
 }
 
-coldata = data.frame(name=colnames(counts)[-c(1)],
-                     condition = sub("_.*","",colnames(counts)[-c(1)]),
+kable(metadata, caption = "Sample Metadata")
+write_tsv(metadata, file.path(save_dir,"sample_metadata.tsv"))
+
+kable(head(counts, 10), caption = "Transcript Counts")
+write_tsv(counts, file.path(save_dir,"transcript_counts.tsv"))
+```
+
+### Next, run DESeq for different conditions
+
+```{r run_DESeq}
+# add count column names to metadata to detect count column order errors
+coldata <- data.frame(metadata, 
+                     name = colnames(counts)[-1],  # exclude Geneid
                      stringsAsFactors = TRUE)
 
-dds <- DESeqDataSetFromMatrix(countData = counts[, -c(1)],
-                       colData = coldata,
-                       design = ~condition)
+# create DESeq2 dataset object with countData and colData (metadata)
+dds <- DESeqDataSetFromMatrix(countData = counts[, -1],  # exclude Geneid
+                             colData = coldata,
+                             design = ~condition)
 
+# set gene IDs as row names for the DESeq object
 rownames(dds) <- counts$Geneid
 
+# filter low-count genes
 keep <- rowSums(counts(dds) >= 2) >= 2
 dds <- dds[keep,]
 
+cat("Filtered from", nrow(counts), "to", nrow(dds), "genes after low-count filtering\n")
+
+# run the main DESeq2 analysis
 dds <- DESeq(dds)
 
-write_rds(dds,"DESeq_results/DESeq.rds")
+# save the DESeq2 results object
+write_rds(dds, file.path(save_dir, "DESeq.rds"))
 ```
 
-#```{r gene_names}
+### Retrieve gene names to replace geneIDs
 
+```{r gene_names}
+# retrieve gene annotations from Ensembl using biomaRt
 mart <- useEnsembl(biomart = "ensembl", 
-                   dataset = "mmusculus_gene_ensembl", 
-                   mirror = "asia")
-g <- getBM(filters= "ensembl_gene_id", 
-           	attributes= c("ensembl_gene_id","external_gene_name"),
-		values=counts$Geneid, 
-		mart= mart)
+                   dataset = "mmusculus_gene_ensembl",  # mouse genome
+                   mirror = "asia")  # use asia mirror for better connectivity
 
-counts <- counts %>% dplyr::rename(ensembl_gene_id = Geneid)%>%
-  left_join(g)
-write_tsv(counts,"DESeq_results/gene_counts.tsv")
+# query biomaRt to get gene names for gene IDs
+g <- getBM(filters = "ensembl_gene_id", 
+           attributes = c("ensembl_gene_id", "external_gene_name",
+                          "chromosome","description"),
+           values = counts$Geneid, 
+           mart = mart)
+
+cat("Retrieved gene symbols for", nrow(g), "out of", nrow(counts), "genes\n")
+
+# add gene names to the counts table
+# left_join ensures we keep all genes even if some don't have names
+counts <- counts %>% 
+  dplyr::rename(ensembl_gene_id = Geneid) %>%
+  left_join(g, by = "ensembl_gene_id")
+
+# save annotated counts table
+write_tsv(counts, file.path(save_dir, "gene_counts.tsv"))
 ```
 
-### some plots for sample similarities
-#```{r plots}
-vsd <- vst(dds, blind=FALSE)
+### Quality control plots to assess sample similarity and batch effects
 
-# Plot of the 20 most highly expressed genes
-select <- order(rowMeans(counts(dds,normalized=TRUE)),
-                decreasing=TRUE)[1:20]
-df <- as.data.frame(colData(dds)[,c("condition")])
-x<-as.data.frame(assay(vsd)[select,]) %>% 
+```{r plots}
+# apply vst normalization for visualizations
+vsd <- vst(dds, blind = FALSE)
+
+# data for 20 most highly expressed transcrips
+select <- order(rowMeans(counts(dds, normalized = TRUE)), 
+                decreasing = TRUE)[1:20]
+
+# prepare with gene name instead of IDs
+heatmap_data <- as.data.frame(assay(vsd)[select, ]) %>% 
   rownames_to_column("ensembl_gene_id") %>% 
-  left_join(g) %>% dplyr::select(-c(ensembl_gene_id)) %>%
+  left_join(g, by = "ensembl_gene_id") %>% 
+  select(-ensembl_gene_id) %>%
   column_to_rownames("external_gene_name")
-pheatmap(x, cluster_rows=FALSE)
 
+# create heatmap of top expressed genes
+pheatmap(heatmap_data, 
+         cluster_rows = FALSE,
+         main = "Top 20 Most Highly Expressed Genes",
+         filename = file.path(save_dir, "plots", "top_genes_heatmap.png"))
+
+# sample-to-sample distance heatmap
 sampleDists <- dist(t(assay(vsd)))
 sampleDistMatrix <- as.matrix(sampleDists)
-colnames(sampleDistMatrix) <- NULL
-colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
-pheatmap(sampleDistMatrix,
-         clustering_distance_rows=sampleDists,
-         clustering_distance_cols=sampleDists,
-         col=colors)
+colnames(sampleDistMatrix) <- NULL  # remove column names for cleaner plot
+colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(255)
 
-plotPCA(vsd, intgroup=c("name"))+ggrepel::geom_text_repel(aes(label=name),color="black")+theme_bw()+theme(legend.position = "none")
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors,
+         main = "Sample-to-Sample Distances",
+         filename = file.path(save_dir, "plots", "sample_distances.png"))
+
+# PCA plot
+pca_plot <- plotPCA(vsd, intgroup = c("name")) +
+  geom_text_repel(aes(label = name), color = "black", size = 3) +
+  theme_bw() +
+  theme(legend.position = "none") +
+  ggtitle("Principal Component Analysis")
+
+print(pca_plot)
+ggsave(file.path(save_dir, "plots", "PCA_plot.png"), 
+       plot = pca_plot, width = 10, height = 8)
 ```
 
 ### Differential expression analysis
 
-#```{r DE_results}
-g <- getBM(filters= "ensembl_gene_id", 
-           	attributes= c("ensembl_gene_id","external_gene_name", "chromosome_name","description"),
-		values=rownames(dds), 
-		mart= mart)
+```{r DE_results}
+# get all mouse MSigDB collections for GSEA
+all_msig <- msigdbr(species = "Mus musculus")
 
-res<-as.data.frame(results(dds))%>% 
-  rownames_to_column("ensembl_gene_id")%>% 
-  mutate(log2FoldChange=log2FoldChange * (-1))%>%
-  left_join(g) %>% mutate(padj=replace_na(padj,1))
-write_tsv(res,"DESeq_results/differential_expression.tsv")
+# create nested list: collections -> pathways -> genes
+msig_sets <- all_msig %>%
+  split(.$gs_subcat) %>%  # split by subcategory first
+  map(~ split(.x$ensembl_gene, .x$gs_name))  # then split genes by pathway name
 
-x<-filter(res,padj<0.05)
-nrow(x)
+# remove empty subcategories
+msig_sets <- msig_sets[lengths(msig_sets) > 0]
 
-ggplot(x,aes(log2FoldChange,-log(padj+(1e-300))))+
-  geom_point()+
-  ggrepel::geom_text_repel(data=top_n(x,50,-padj),aes(label=external_gene_name))+
-  theme_bw()+ggtitle("Significantly differentially expressed genes")+xlab("fold change: Il33_KO vs control")
+cat("Available gene set collections:", names(msig_sets), "\n")
 
-ggsave("DESeq_results/plots/DE_volcano.jpg",height=15,width=15)
+# get all unique condition pairs for pairwise comparisons
+condition_pairs <- combn(unique(metadata$condition), 2, simplify = FALSE)
 
-ks3<-readxl::read_excel("Keren-Shaul_sup3.xlsx") %>% 
-  filter(`Gene name` %in% res$external_gene_name) %>% 
-  mutate(pval=as.numeric(`DAM FDR p-value`),fc=as.numeric(`Fold-change (DAM to homeostatic microglia)`)) %>%
-  filter(fc>0) %>% #positive is DAM, negative is homeo 
-  top_n(500,pval) #pval is actually log10
+# loop through each unique pair
+for (pair in condition_pairs) {
+  con1 <- pair[1]
+  con2 <- pair[2]
+  comparison_name <- paste0(con1, "_vs_", con2)
+  
+  cat("\n### Comparing", con1, "vs", con2, "\n")
+  
+  # get results from DESeq comparing the two conditions
+  res <- results(dds, contrast = c("condition", con1, con2)) %>%
+    as.data.frame() %>%
+    rownames_to_column("ensembl_gene_id") %>%
+    left_join(g, by = "ensembl_gene_id") %>%
+    mutate(padj = replace_na(padj, 1)) %>%
+    arrange(padj)
+  
+  # save pairwise comparison with gene names
+  write_tsv(res, file.path(save_dir, paste0("DE_", comparison_name, ".tsv")))
+  
+  # volcano plot of differentially expressed genes
+  sig_genes <- filter(res, padj < 0.05)
+  
+  volcano_plot <- ggplot(res, aes(log2FoldChange, -log10(padj + 1e-300))) +
+    geom_point(alpha = 0.6) +
+    geom_point(data = sig_genes, color = "red") +
+    geom_text_repel(data = slice_max(
+                            slice_min(sig_genes, padj, n = 20),
+                          abs(log2FoldChang),n=20), 
+                   aes(label = external_gene_name), size = 3) +
+    theme_bw() +
+    labs(title = paste("Volcano Plot:", comparison_name),
+         x = paste("log2 Fold Change (", con1, "vs", con2, ")"),
+         y = "-log10(adjusted p-value)")
+  
+  print(volcano_plot)
+  ggsave(file.path(save_dir, "plots", paste0("volcano_", comparison_name, ".png")), 
+         plot = volcano_plot, width = 10, height = 8)
+  
+  cat("Significant genes (padj < 0.05):", nrow(sig_genes), "\n")
+  
+  # gene set enrichment analysis (GSEA)
+  # create ranked gene list for GSEA (sorted by log2FoldChange)
+  gene_list <- res$log2FoldChange
+  names(gene_list) <- res$ensembl_gene_id
+  gene_list <- sort(gene_list, decreasing = TRUE)
+  
+  # remove genes without Ensembl IDs
+  #gene_list <- gene_list[!is.na(names(gene_list))]
+  
+  cat("Running GSEA with", length(gene_list), "ranked genes\n")
+  
+  # create Excel workbook for this comparison 
+  xl_filename <- paste0("GSEA_", comparison_name, ".xlsx")
+  wb <- createWorkbook()
+  
+  # run GSEA for selected collections (limit to avoid too many results)
+  selected_collections <- c("HALLMARK", "CP_KEGG", "CP_REACTOME", "GO_BP")
+  available_collections <- intersect(selected_collections, names(msig_sets))
+  
+  for (collection_name in available_collections) {
+    cat("Analyzing", collection_name, "gene sets...\n")
+    
+    # run fgsea
+    fgsea_res <- fgsea::fgsea(pathways = msig_sets[[collection_name]], 
+                              stats = gene_list,
+                              minSize = 15,
+                              maxSize = 500,
+                              nproc = 1) %>% 
+      as.data.frame() %>%
+      arrange(padj) %>%
+      filter(padj < 0.05)
+    
+    if (nrow(fgsea_res) > 0) {
+      # add worksheet for this collection
+      addWorksheet(wb, collection_name)
+      writeData(wb, collection_name, fgsea_res)
+      cat("Found", nrow(fgsea_res), "significant pathways in", collection_name, "\n")
+    }
+  }
+  
+  # save workbook
+  saveWorkbook(wb, file.path(save_dir, xl_filename), overwrite = TRUE)
+}
 
-x<-filter(res,external_gene_name %in% ks3$`Gene name`)
-ggplot(x,aes(log2FoldChange,-log(pvalue+(1e-300))))+
-  geom_point()+
-  geom_point(data=filter(x,padj<0.05),color="red") +
-  ggrepel::geom_text_repel(data=top_n(x,50,-padj),aes(label=external_gene_name))+
-  theme_bw()+ggtitle("top 500 DAM genes from Keren-Shaul, sup3")+xlab("fold change: Il33_KO vs control")
-ggsave("DESeq_results/plots/DE_volcano2.jpg",height=7,width=7)
-
-ks3<-readxl::read_excel("Keren-Shaul_sup3.xlsx") %>% 
-  filter(`Gene name` %in% res$external_gene_name) %>% 
-  mutate(pval=as.numeric(`DAM FDR p-value`),fc=as.numeric(`Fold-change (DAM to homeostatic microglia)`)) %>%
-  filter(fc<0) %>% #positive is DAM, negative is homeo 
-  top_n(500,pval) #pval is actually log10
-
-x<-filter(res,external_gene_name %in% ks3$`Gene name`)
-ggplot(x,aes(log2FoldChange,-log(pvalue+(1e-300))))+
-  geom_point()+
-  geom_point(data=filter(x,padj<0.05),color="red") +
-  ggrepel::geom_text_repel(data=top_n(x,50,-padj),aes(label=external_gene_name))+
-  theme_bw()+ggtitle("top 500 Hom genes from Keren-Shaul, sup3")+xlab("fold change: Il33_KO vs control")
-ggsave("DESeq_results/plots/DE_volcano3.jpg",height=7,width=7)
 
 ```
-```{r end}
+
+### Analysis Summary
+
+```{r summary}
+# create a summary table of all pairwise comparisons
+summary_results <- tibble()
+
+for (pair in condition_pairs) {
+  con1 <- pair[1]
+  con2 <- pair[2]
+  comparison_name <- paste0(con1, "_vs_", con2)
+  
+  # read back the results file to get summary stats
+  res_file <- file.path(save_dir, paste0("DE_", comparison_name, ".tsv"))
+  if (file.exists(res_file)) {
+    res <- read_tsv(res_file, show_col_types = FALSE)
+    
+    # calculate summary statistics
+    total_genes <- nrow(res)
+    sig_genes <- sum(res$padj < 0.05, na.rm = TRUE)
+    upregulated <- sum(res$padj < 0.05 & res$log2FoldChange > 0, na.rm = TRUE)
+    downregulated <- sum(res$padj < 0.05 & res$log2FoldChange < 0, na.rm = TRUE)
+    
+    summary_results <- bind_rows(summary_results, 
+                                tibble(
+                                  comparison = comparison_name,
+                                  total_genes = total_genes,
+                                  significant = sig_genes,
+                                  upregulated = upregulated,
+                                  downregulated = downregulated,
+                                  percent_significant = round(100 * sig_genes / total_genes, 1)
+                                ))
+  }
+}
+
+kable(summary_results, caption = "Summary of Differential Expression Results")
+write_tsv(summary_results, file.path(save_dir, "DE_summary.tsv"))
+```
+
+### Session Information
+
+```{r session_info}
+# record all package versions and system information for reproducibility
 sessionInfo()
 ```

@@ -374,8 +374,8 @@ process run_DESeq {
 
 		echo "=== Running DESeq analysis on collected count data"
 
-		Rscript -e "rmarkdown::render('${lauchDir}/output/DESeq_analysis.Rmd', \\
-			params=list(count_data='${count_data}', database='${params.database}'))"
+		Rscript -e "rmarkdown::render('${launchDir}/output/DESeq_analysis.Rmd', \\
+			params=list(collected_counts='${count_data}', database='${params.database}'))"
 		"""
 }
 
