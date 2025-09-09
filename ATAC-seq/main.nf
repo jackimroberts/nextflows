@@ -337,7 +337,7 @@ process create_multimacs_run {
 
 		# Create text with the format:
 			# --chip /file1,/file2 --name condition1
-		clean_bams=\$(echo "${bam_files}" | tr -d '[]' | tr ', ' ',')
+		clean_bams=\$(echo "${bam_files}" | tr -d '[]' | sed 's/, /,/g')
 		chip_details="multirep_macs2_pipeline.pl --chip \$clean_bams --name ${meta.condition}"
 		
 		# Place run-specific details in the multimacs script
