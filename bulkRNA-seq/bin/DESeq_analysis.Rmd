@@ -15,7 +15,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE,
 
 if (!require("pacman")) install.packages("pacman")
 
-pacman::p_load(tidyverse,DESeq2,pheatmap,biomaRt,
+pacman::p_load(tidyverse,DESeq2,pheatmap,biomaRt,ggrepel,
                RColorBrewer,knitr,clusterProfiler,msigdbr,fgsea,openxlsx)
 
 set.seed(1234)
@@ -35,49 +35,65 @@ dir.create(file.path(save_dir,"plots"))
 ### First, parse the nextflow channel to generate DESeq input
 
 ```{r parse_nextflow_channel}
-#nextflow collected channel
-collected_counts
+# nextflow collected channel tuple 
+# [[id:x,name:x], counts, biotypes, [id:y,name:y], counts2, biotypes2]
+# extract tuple contents by removing brackets
+# [id:x, name:x], counts, biotypes, [id:y, name:y], counts2, biotypes2
+clean_str <- substr(collected_counts, 2, nchar(collected_counts) - 1)
+# parse individual sample information
+# [id:x, name:x], counts, biotypes
+# [id:y, name:y], counts2, biotypes2
+sample_tuples <- strsplit(clean_str," \\[")[[1]]
 
 # initialize metadata and counts tables
 metadata <- tibble()
 counts <- tibble()
 
-# process each tuple (sample) from the collected channel
-for (sample_tuple in collected_counts) {
-  # extract metadata from first element of tuple
-  meta <- sample_tuple[[1]]
+# process each sample's data from the collected channel
+for (sample_data in sample_tuples) {
   
-  # create metadata row with id, name, condition, and any additional columns
-  meta_row <- tibble(
-    id = meta[[1]],
-    name = meta[[2]],
-    condition = meta[[3]]
-  )
-
-  if (length(meta) > 3) {
-    meta_row$extra <- meta[[4]]
-  }
+  # extract metadata from entry
+  # [id:x, name:x, condition:x, run:x, extras:x]
+  meta_str <- str_extract(sample_data, "^[^\\]]*\\]")
+  # remove brackets
+  # id:x, name:x, condition:x, run:x, extras:x
+  clean_str <- gsub("\\[|\\]", "", meta_str)
+  
+  # create a tibble
+  meta_row <- as_tibble(strsplit(clean_str,", ")[[1]]) %>%
+    separate_wider_delim(value,delim=":",names=c("title","val")) %>%
+    pivot_wider(
+        names_from = title,
+        values_from = val
+      ) %>%
+    separate_wider_delim(extra,delim="|",names_sep = "_", too_few="align_start")
   
   # append to metadata table
-  metadata <- bind_rows(metadata, meta_row)
+  metadata <- bind_rows(metadata, meta_row)  
   
-  # read count file (second element of tuple) and extract gene IDs and counts
-  sample_counts <- read_tsv(sample_tuple[[2]], skip = 1) %>%
+  # get count data
+  # separate sample data by comma
+  # [1] [id:x
+  # [2] name:x]
+  # [3] counts
+  # [4] biotypes
+  split_data<-strsplit(sample_data,", ")[[1]]
+  # pull second to last entry as count_file
+  count_file<-split_data[length(split_data) - 1]
+
+  # read count file and extract gene IDs and counts
+  sample_counts <- read_tsv(count_file, skip = 1) %>%
     select(Geneid, count = last_col())
   
   # if this is the first sample, initialize counts table
   if (nrow(counts) == 0) {
     counts <- sample_counts %>%
-      rename(!!meta$name := count)
+      rename(!!meta_row$name := count)
   } else {
     # append counts as new column
-    counts <- counts %>%
-      left_join(sample_counts %>% rename(!!meta$name := count), by = "Geneid")
+  counts <- counts %>%
+      left_join(sample_counts %>% rename(!!meta_row$name := count), by = "Geneid")
   }
-}
-# separate extra column by tabs if it exists
-if ("extra" %in% colnames(metadata)) {
-  metadata <- separate(metadata, extra, sep = "\t", fill = "right")
 }
 
 kable(metadata, caption = "Sample Metadata")
@@ -85,6 +101,7 @@ write_tsv(metadata, file.path(save_dir,"sample_metadata.tsv"))
 
 kable(head(counts, 10), caption = "Transcript Counts")
 write_tsv(counts, file.path(save_dir,"transcript_counts.tsv"))
+
 ```
 
 ### Next, run DESeq for different conditions
@@ -120,18 +137,16 @@ write_rds(dds, file.path(save_dir, "DESeq.rds"))
 
 ```{r gene_names}
 # retrieve gene annotations from Ensembl using biomaRt
-mart <- useEnsembl(biomart = "ensembl", 
-                   dataset = "mmusculus_gene_ensembl",  # mouse genome
-                   mirror = "asia")  # use asia mirror for better connectivity
+mart <- mart <- useMart(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
 
 # query biomaRt to get gene names for gene IDs
 g <- getBM(filters = "ensembl_gene_id", 
            attributes = c("ensembl_gene_id", "external_gene_name",
-                          "chromosome","description"),
-           values = counts$Geneid, 
+                          "chromosome_name","description"),
+           values = rownames(dds), 
            mart = mart)
 
-cat("Retrieved gene symbols for", nrow(g), "out of", nrow(counts), "genes\n")
+cat("Retrieved gene names for", nrow(g), "out of", nrow(dds), "transcripts\n")
 
 # add gene names to the counts table
 # left_join ensures we keep all genes even if some don't have names
@@ -156,15 +171,17 @@ select <- order(rowMeans(counts(dds, normalized = TRUE)),
 # prepare with gene name instead of IDs
 heatmap_data <- as.data.frame(assay(vsd)[select, ]) %>% 
   rownames_to_column("ensembl_gene_id") %>% 
-  left_join(g, by = "ensembl_gene_id") %>% 
+  left_join(g[,1:2], by = "ensembl_gene_id") %>% 
   select(-ensembl_gene_id) %>%
   column_to_rownames("external_gene_name")
 
 # create heatmap of top expressed genes
-pheatmap(heatmap_data, 
+p <- pheatmap(heatmap_data, 
          cluster_rows = FALSE,
-         main = "Top 20 Most Highly Expressed Genes",
-         filename = file.path(save_dir, "plots", "top_genes_heatmap.png"))
+         main = "Top 20 Most Highly Expressed Genes")
+
+print(p)
+ggsave(file.path(save_dir, "plots", "top_genes_heatmap.png"), plot = p)
 
 # sample-to-sample distance heatmap
 sampleDists <- dist(t(assay(vsd)))
@@ -172,12 +189,14 @@ sampleDistMatrix <- as.matrix(sampleDists)
 colnames(sampleDistMatrix) <- NULL  # remove column names for cleaner plot
 colors <- colorRampPalette(rev(brewer.pal(9, "Blues")))(255)
 
-pheatmap(sampleDistMatrix,
+p <- pheatmap(sampleDistMatrix,
          clustering_distance_rows = sampleDists,
          clustering_distance_cols = sampleDists,
          col = colors,
-         main = "Sample-to-Sample Distances",
-         filename = file.path(save_dir, "plots", "sample_distances.png"))
+         main = "Sample-to-Sample Distances")
+
+print(p)
+ggsave(file.path(save_dir, "plots", "sample_distances.png"), plot = p)
 
 # PCA plot
 pca_plot <- plotPCA(vsd, intgroup = c("name")) +
@@ -195,11 +214,11 @@ ggsave(file.path(save_dir, "plots", "PCA_plot.png"),
 
 ```{r DE_results}
 # get all mouse MSigDB collections for GSEA
-all_msig <- msigdbr(species = "Mus musculus")
+all_msig <- msigdbr(species = "Mus musculus",db_species = "MM")
 
 # create nested list: collections -> pathways -> genes
 msig_sets <- all_msig %>%
-  split(.$gs_subcat) %>%  # split by subcategory first
+  split(.$gs_collection_name) %>%  # split by subcategory first
   map(~ split(.x$ensembl_gene, .x$gs_name))  # then split genes by pathway name
 
 # remove empty subcategories
@@ -208,7 +227,7 @@ msig_sets <- msig_sets[lengths(msig_sets) > 0]
 cat("Available gene set collections:", names(msig_sets), "\n")
 
 # get all unique condition pairs for pairwise comparisons
-condition_pairs <- combn(unique(metadata$condition), 2, simplify = FALSE)
+condition_pairs <- combn(as.character(unique(colData(dds)$condition)), 2, simplify = FALSE)
 
 # loop through each unique pair
 for (pair in condition_pairs) {
@@ -217,7 +236,6 @@ for (pair in condition_pairs) {
   comparison_name <- paste0(con1, "_vs_", con2)
   
   cat("\n### Comparing", con1, "vs", con2, "\n")
-  
   # get results from DESeq comparing the two conditions
   res <- results(dds, contrast = c("condition", con1, con2)) %>%
     as.data.frame() %>%
@@ -237,7 +255,7 @@ for (pair in condition_pairs) {
     geom_point(data = sig_genes, color = "red") +
     geom_text_repel(data = slice_max(
                             slice_min(sig_genes, padj, n = 20),
-                          abs(log2FoldChang),n=20), 
+                          abs(log2FoldChange),n=20), 
                    aes(label = external_gene_name), size = 3) +
     theme_bw() +
     labs(title = paste("Volcano Plot:", comparison_name),
@@ -266,18 +284,19 @@ for (pair in condition_pairs) {
   wb <- createWorkbook()
   
   # run GSEA for selected collections (limit to avoid too many results)
-  selected_collections <- c("HALLMARK", "CP_KEGG", "CP_REACTOME", "GO_BP")
+  selected_collections <- c("Hallmark", "GO Biological Process", 
+                            "GO Molecular Function", "WikiPathways")
   available_collections <- intersect(selected_collections, names(msig_sets))
   
   for (collection_name in available_collections) {
     cat("Analyzing", collection_name, "gene sets...\n")
     
     # run fgsea
-    fgsea_res <- fgsea::fgsea(pathways = msig_sets[[collection_name]], 
+    fgsea_res <- suppressMessages(fgsea::fgsea(pathways = msig_sets[[collection_name]], 
                               stats = gene_list,
                               minSize = 15,
                               maxSize = 500,
-                              nproc = 1) %>% 
+                              nproc = 1)) %>% 
       as.data.frame() %>%
       arrange(padj) %>%
       filter(padj < 0.05)
@@ -304,8 +323,8 @@ for (pair in condition_pairs) {
 summary_results <- tibble()
 
 for (pair in condition_pairs) {
-  con1 <- pair[1]
-  con2 <- pair[2]
+  con1 <- pair[[1]][1]
+  con2 <- pair[[1]][2]
   comparison_name <- paste0(con1, "_vs_", con2)
   
   # read back the results file to get summary stats

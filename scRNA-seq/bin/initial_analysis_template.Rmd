@@ -38,42 +38,50 @@ dir.create(file.path(save_dir, "plots"))
 ### Parse the nextflow channel to extract sample info and cellranger paths
 
 ```{r parse_nextflow_channel}
+# nextflow collected channel tuple format:
+# [[id:x, name:x, condition:x, extra:x], cellranger_path, [id:y, name:y, condition:y, extra:y], cellranger_path2]
+
+# extract tuple contents by removing brackets
+# [id:x, name:x, condition:x, extra:x], cellranger_path, [id:y, name:y, condition:y, extra:y], cellranger_path2
+clean_str <- substr(collected_cellranger, 2, nchar(collected_cellranger) - 1)
+# parse individual sample information
+# [id:x, name:x, condition:x, extra:x], cellranger_path
+# [id:y, name:y, condition:y, extra:y], cellranger_path2
+sample_tuples <- strsplit(clean_str," \\[")[[1]]
+
 # initialize metadata and cellranger paths
 metadata <- tibble()
 cellranger_paths <- c()
 
-# process each tuple (sample) from the collected channel
-for (sample_tuple in collected_cellranger) {
-  # extract metadata from first element of tuple
-  meta <- sample_tuple[[1]]
+# process each sample's data from the collected channel
+for (sample_data in sample_tuples) {
   
-  # create metadata row with id, name, condition, and any additional columns
-  meta_row <- tibble(
-    id = meta[[1]],
-    name = meta[[2]],
-    condition = meta[[3]]
-  )
+  # extract metadata from entry
+  # [id:x, name:x, condition:x, extra:x]
+  meta_str <- str_extract(sample_data, "^[^\\]]*\\]")
+  # remove brackets
+  # id:x, name:x, condition:x, extra:x
+  clean_str <- gsub("\\[|\\]", "", meta_str)
   
-  # add extra column if it exists
-  if (length(meta) > 3) {
-    meta_row$extra <- meta[[4]]
-  }
+  # create a tibble
+  meta_row <- as_tibble(strsplit(clean_str,", ")[[1]]) %>%
+    separate_wider_delim(value,delim=":",names=c("title","val")) %>%
+    pivot_wider(
+        names_from = title,
+        values_from = val
+      ) %>%
+    separate_wider_delim(extra,delim="|",names_sep = "_", too_few="align_start")
   
   # append to metadata table
-  metadata <- bind_rows(metadata, meta_row)
+  metadata <- bind_rows(metadata, meta_row)  
   
-  # extract cellranger output path (second element of tuple)
-  cellranger_paths <- c(cellranger_paths, sample_tuple[[2]])
-}
-
-# separate extra column by tabs if it exists
-if ("extra" %in% colnames(metadata)) {
-  metadata <- separate(metadata, extra, sep = "\t", fill = "right")
+  # get cellranger path (string after the last comma)
+  cellranger_path <- sub(".*,\\s*", "", sample_data)
+  cellranger_paths <- c(cellranger_paths, cellranger_path)
 }
 
 kable(metadata, caption = "Sample Metadata")
 write_tsv(metadata, file.path(save_dir, "sample_metadata.tsv"))
-
 ```
 
 ### Create seurat object and determine quality cut-offs

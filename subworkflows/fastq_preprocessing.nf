@@ -20,7 +20,7 @@ workflow FASTQ_PREPROCESSING {
             def sample_id = row[0]
             def sample_name = row[1] 
             def condition = row[2]
-            def extra_data = row.size() > 3 ? row[3..-1].join('\t') : ""
+            def extra_data = row.size() > 3 ? row[3..-1].join('|') : ""
             [sample_id, sample_name, condition, extra_data]
         }
         | set { sample_sheet }
