@@ -197,6 +197,7 @@ process dedup_umi {
 
 		"""
 }
+
 /*
  * qc after umi
  * originally bundled with dedup_umi but modules and containers aren't compatible
@@ -231,7 +232,6 @@ process dedup_qc {
 
 		"""
 }
-
 
 /*
  * alignment with star
@@ -283,9 +283,11 @@ process star_align {
 			--quantMode ${params.star.quantMode} \\
 			--outWigType ${params.star.outWigType} \\
 			--outWigStrand ${params.star.outWigStrand} \\
-			--outSAMunmapped ${params.star.outSAMunmapped} > star.out 2>&1
-
-		tail -1 star.out
+			--outSAMunmapped ${params.star.outSAMunmapped} \\
+			> star.log 2>&1
+		
+		# Output only the last line of STAR stdout
+		tail -1 star.log
 
 		mv Aligned.sortedByCoord.out.bam ${meta.id}_${meta.run}.raw.bam
 

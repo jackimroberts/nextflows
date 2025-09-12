@@ -99,5 +99,5 @@ done
 
 ## Generate checksums for all downloaded files
 echo "=== Generating checksums"
-md5sum **fastq* > md5_downloads.txt 2>/dev/null || echo "No fastq files to checksum"
+md5sum **fastq* *ora > md5_downloads.txt 2>/dev/null || echo "No fastq files to checksum"
 cat md5_downloads.txt
