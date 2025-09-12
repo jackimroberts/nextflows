@@ -128,7 +128,6 @@ process adapter_trim {
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path('*fq')
-		path "cutadapt.log"
 	script:
 		"""
           	#!/bin/bash
@@ -211,6 +210,8 @@ process merge_run_bams {
  * filter bams for duplicates, unaligned, mitochondria, blacklist
  */
 process filter_bams {
+	// Default filter parameters if not defined
+	params.filter = [flag: 3340, args_markdup: ""]
 	input:
 		tuple val(meta), path(bam)
 	output:
@@ -218,7 +219,8 @@ process filter_bams {
 	script:
 		"""
 		sh ${projectDir}/../bin/filter_bams.sh $bam ${meta.name} \\
-			${params.genome_blacklist} ${params.filter.flag} ${task.cpus}
+			${params.genome_blacklist ?: ""} ${params.filter.flag} ${task.cpus} \\
+			"${params.filter.args_markdup ?: ""}"
 		"""
 }
 
@@ -253,7 +255,7 @@ process measure_depth {
  * Collect QC files from successful processes
  */
 process collect_qc {
-	publishDir "${params.outputDir}/qc_metrics", mode: 'move'
+	publishDir "${params.outputDir}", mode: 'copy'
 	input:
 		val trigger
 	output:
@@ -270,35 +272,42 @@ process collect_qc {
 		echo "====== PROCESS_SUMMARY"
 		
 		mkdir -p qc_metrics
-		
-		# Collect cutadapt logs
-		find ${launchDir}/work/*/*/*cutadapt.log -exec cp {} qc_metrics/ \\; 2>/dev/null || true
-		
-		# Collect STAR logs
-		find ${launchDir}/work/*/*/*Log.final.out -exec cp {} qc_metrics/ \\; 2>/dev/null || true
-		
-		# Collect MACS2 logs
-		find ${launchDir}/work/*/*/*macs.log -exec cp {} qc_metrics/ \\; 2>/dev/null || true
-		
-		# Collect Bowtie2 logs
-		find ${launchDir}/work/*/*/*bowtie.log -exec cp {} qc_metrics/ \\; 2>/dev/null || true
-		
+
+		# Create organized subfolders
+		mkdir -p qc_metrics/fastqc
+		mkdir -p qc_metrics/trimming
+		mkdir -p qc_metrics/alignment
+		mkdir -p qc_metrics/rna_metrics
+		mkdir -p qc_metrics/feature_counts
+		mkdir -p qc_metrics/peak_calling
+
 		# Collect FastQC files
-		find ${launchDir}/work/*/*/*_fastqc.html -exec cp {} qc_metrics/ \\; 2>/dev/null || true
-		find ${launchDir}/work/*/*/*_fastqc.zip -exec cp {} qc_metrics/ \\; 2>/dev/null || true
-		
-		# Collect featureCounts summaries
-		find ${launchDir}/work/*/*/*summary -exec cp {} qc_metrics/ \\; 2>/dev/null || true
-		
-		# Collect STAR stat files
-		find ${launchDir}/work/*/*/*stat -exec cp {} qc_metrics/ \\; 2>/dev/null || true
-		
+		find ${launchDir}/work/*/*/*_fastqc.html -exec cp {} qc_metrics/fastqc/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*_fastqc.zip -exec cp {} qc_metrics/fastqc/ \\; 2>/dev/null || true
+
+		# Collect trimming logs
+		find ${launchDir}/work/*/*/*cutadapt.log -exec cp {} qc_metrics/trimming/ \\; 2>/dev/null || true
+
+		# Collect STAR alignment logs
+		find ${launchDir}/work/*/*/*Log.final.out -exec cp {} qc_metrics/alignment/ \\; 2>/dev/null || true
+		# Collect Bowtie2 logs (alternative aligners)
+		find ${launchDir}/work/*/*/*bowtie.log -exec cp {} qc_metrics/alignment/ \\; 2>/dev/null || true
+
 		# Collect RNA metrics files
-		find ${launchDir}/work/*/*/*rna_metrics -exec cp {} qc_metrics/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*rna_metrics -exec cp {} qc_metrics/rna_metrics/ \\; 2>/dev/null || true
+
+		# Collect featureCounts summaries (specific file extensions)
+		find ${launchDir}/work/*/*/*counts.summary -exec cp {} qc_metrics/feature_counts/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*biotypes.summary -exec cp {} qc_metrics/feature_counts/ \\; 2>/dev/null || true
+
+		# Collect MACS2 logs (for ATAC-seq peak calling)
+		find ${launchDir}/work/*/*/*macs.log -exec cp {} qc_metrics/peak_calling/ \\; 2>/dev/null || true
+
+		# Skip collection of .stat directories (they contain analysis files, not QC metrics)
 		
 		# Show what was collected
 		echo "=== Collected QC files:"
-		ls -la qc_metrics/ || echo "No QC files found"
+		ls -la qc_metrics/*/ || echo "No QC files found"
 		"""
 }
 
@@ -311,7 +320,7 @@ process multiqc {
 		path(qc_metrics_dir)
 	output:
 		path "multiqc_report.html"
-		path "multiqc_data"
+		path "multiqc_report_data"
 	script:
 		"""
 		#!/bin/bash

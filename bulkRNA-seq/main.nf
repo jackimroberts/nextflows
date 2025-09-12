@@ -98,7 +98,6 @@ process fastqc1 {
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path(fastqs)
-		path "*_fastqc.{html,zip}"
 	script:
 		def r1 = fastqs.find { it.name.matches('.*[-_]R1[.-_].*') }
 		def r2 = fastqs.find { it.name.matches('.*[-_]R2[.-_].*') }
@@ -128,7 +127,6 @@ process fastqc2 {
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path(fastqs)
-		path "*_fastqc.{html,zip}"
 	script:
 		"""
           	#!/bin/bash
@@ -289,8 +287,6 @@ process star_align {
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path("${meta.id}_${meta.run}.raw.bam")
-		path "*Log.final.out"
-		path "*.stat"
 	script:
 		def r1 = fastqs.find { it.name.contains('.1.fq') }
 		def r2 = fastqs.find { it.name.contains('.2.fq') }
@@ -374,7 +370,6 @@ process count_features {
 		tuple val(meta), path(bam)
 	output:
 		tuple val(meta), path("${meta.name}.counts"), path("${meta.name}.biotypes")
-		path "*.summary"
 	script:
 		"""
 		#!/bin/bash
