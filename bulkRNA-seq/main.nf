@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 
 // Include subworkflows and shared help
-include { ingetSharedHelp } from '../modules/shared_help'
+include { getSharedHelp } from '../modules/shared_help'
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
 include { CREATE_SCALED_BIGWIGS } from '../subworkflows/create_scaled_bigwigs.nf'
 include { MERGE_SEQUENCING_RUNS } from '../subworkflows/merge_sequencing_runs.nf'
