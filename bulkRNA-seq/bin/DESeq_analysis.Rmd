@@ -2,7 +2,10 @@
 title: "DESeq analysis"
 author: "Jacqueline Roberts, PhD"
 date: 'Compiled: `r format(Sys.Date(), "%B %d, %Y")`'
-output: html_document
+output: 
+  html_document:
+    embed-resources: true
+    format: html5
 params:
  collected_counts: ''
  database: ''

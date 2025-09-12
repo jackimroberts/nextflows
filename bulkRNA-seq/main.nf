@@ -1,7 +1,7 @@
 #!/usr/bin/env nextflow
 
 // Include subworkflows and shared help
-include { getSharedHelp } from '../modules/shared_help'
+include { ingetSharedHelp } from '../modules/shared_help'
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
 include { CREATE_SCALED_BIGWIGS } from '../subworkflows/create_scaled_bigwigs.nf'
 include { MERGE_SEQUENCING_RUNS } from '../subworkflows/merge_sequencing_runs.nf'
@@ -175,7 +175,7 @@ process extract_umi {
 process dedup_umi {
 	container 'docker://quay.io/biocontainers/umi_tools:0.5.4--py27hdd9f355_1'
 	input:
-		tuple val(meta), path(bam)
+		tuple val(meta), path(bam), path(bai)
 	output:
 		tuple val(meta), path("${meta.name}.umidedup.bam"), path(bam)
 	script:
@@ -192,13 +192,13 @@ process dedup_umi {
 		echo "=== removing duplicated umi from ${meta.name}"
 
 		umi_tools dedup -I $bam --paired --output-stats=deduplicated \\
-			-S ${meta.name}.umidedup.bam
+			-S ${meta.name}.umidedup.bam > dedup.out 2>&1
 
 
 		"""
 }
 /*
- * deduplicate with umi
+ * qc after umi
  * originally bundled with dedup_umi but modules and containers aren't compatible
  */
 process dedup_qc {
@@ -267,6 +267,7 @@ process star_align {
 		echo "Strategy: Align paired-end reads with star"
 		echo "\$(star --version | head -1 | awk '{print \$1,\$2,\$3}')"
 		echo "Reference: ${params.transcriptome_index}"
+		echo "RSEM Index: ${params.rsem_index}"
 		echo "Parameters: ${params.star}"
 		echo "====== STAR_ALIGN ======"
 		echo "====== PROCESS_SUMMARY"
@@ -282,20 +283,24 @@ process star_align {
 			--quantMode ${params.star.quantMode} \\
 			--outWigType ${params.star.outWigType} \\
 			--outWigStrand ${params.star.outWigStrand} \\
-			--outSAMunmapped ${params.star.outSAMunmapped}
+			--outSAMunmapped ${params.star.outSAMunmapped} > star.out 2>&1
+
+		tail -1 star.out
 
 		mv Aligned.sortedByCoord.out.bam ${meta.id}_${meta.run}.raw.bam
 
 		# rename for multiqc ID parsing
-		mv Log.out ${meta.id}_${meta.run}.Log.final.out
+		mv Log.final.out ${meta.id}_${meta.run}.Log.final.out
 	
 		bam_count=\$(samtools view -c ${meta.id}_${meta.run}.raw.bam)
 		echo "${meta.id}_${meta.run}.raw.bam: \$bam_count reads aligned"
 
-		# QC
+		echo "=== estimating transcriptome alignment with rsem"
 		rsem-calculate-expression --paired-end -p ${task.cpus} \\
 			--alignments --strandedness reverse --no-bam-output \\
-   			Aligned.toTranscriptome.out.bam ${params.rsem_index} ${meta.id}_${meta.run}
+   			Aligned.toTranscriptome.out.bam ${params.rsem_index} ${meta.id}_${meta.run} > rsem.out 2>&1
+
+		tail -5 rsem.out
 		"""
 }
 
@@ -306,7 +311,7 @@ process star_align {
  */
 process count_features {
 	publishDir 'output/counts', mode: 'copy'
-	params.counts = '--stranded reverse --largestOverlap --paired'
+	params.counts = '-s 2 --largestOverlap -p'
 	input:
 		tuple val(meta), path(bam)
 	output:
@@ -403,7 +408,7 @@ process get_metrics {
 		echo "====== GET_METRICS ======"
 		echo "====== PROCESS_SUMMARY"
 		
-		echo "=== Collecting RNA-seq metrics for ${meta.name}"
+		echo "=== Collecting picard RNA-seq metrics for ${meta.name}"
 
 		REF="\$(echo ${params.database}/*refflat)"
 		INT="\$(echo ${params.database}/*interval)"
@@ -415,7 +420,6 @@ process get_metrics {
 			INPUT=$bam \\
 			OUTPUT=${meta.name}.rna_metrics
 		
-		echo "Metrics Collection Complete"
 		echo "Output: ${meta.name}.rna_metrics"
 		"""
 }

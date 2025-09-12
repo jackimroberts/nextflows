@@ -44,6 +44,7 @@ workflow {
 	// Filter merged BAM files
 	merged_bams = MERGE_SEQUENCING_RUNS.out.merged_bams
 		| filter_bams
+		| map { meta, bam, bai -> [meta, bam] }
 		| set { filtered_bams }
 
 	// Call peaks from each sample

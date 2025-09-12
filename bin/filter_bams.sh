@@ -84,14 +84,14 @@ samtools fixmate -m $sample.tmp $sample.fixmate.bam
 samtools sort -@ $cpus $sample.fixmate.bam -o $sample.sorted.bam
 
 ## Mark duplicates including optical duplicates using samtools
-samtools markdup -d 2500 -@ $cpus $sample.sorted.bam $sample.dedup.bam
+samtools markdup -d 2500 -@ $cpus $sample.sorted.bam $sample.dedup.bam 2> markdup.log
 
 ## Count duplicates
 total_after_dedup=$(samtools view -c $sample.dedup.bam)
 duplicates=$(($initial_reads - $total_after_dedup))
 
 ## Get optical vs other duplicates from markdup output
-optical_duplicates=$(samtools view -c -f 1024 $sample.dedup.bam | grep -o '[0-9]*' || echo "0")
+optical_duplicates=$(grep "optical duplicates" markdup.log | awk '{print $4}' || echo "0")
 other_duplicates=$(($duplicates - $optical_duplicates))
 
 echo "$duplicates : duplicates"

@@ -199,7 +199,7 @@ process filter_bams {
 	input:
 		tuple val(meta), path(bam)
 	output:
-		tuple val(meta), path('*.filtered.bam')
+		tuple val(meta), path('*.filtered.bam'), path('*.filtered.bam.bai')
 	script:
 		"""
 		sh ${projectDir}/../bin/filter_bams.sh $bam ${meta.name} \\
@@ -269,6 +269,6 @@ process bam_to_bigwig {
 		bamCoverage -b $bam --scaleFactor \$scale -o ${meta.name}.bw
 		
 		file_size=\$(du -h "${meta.name}.bw" | cut -f1)
-		echo "Created ${meta.name}.bw: \$file_size"
+		echo "Created ${meta.name}.bw, file size: \$file_size"
 		"""
 }
