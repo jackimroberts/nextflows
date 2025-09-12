@@ -5,7 +5,7 @@ include { getSharedHelp } from '../modules/shared_help'
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
 include { CREATE_SCALED_BIGWIGS } from '../subworkflows/create_scaled_bigwigs.nf'
 include { MERGE_SEQUENCING_RUNS } from '../subworkflows/merge_sequencing_runs.nf'
-include { adapter_trim; filter_bams } from '../modules/shared_processes.nf'
+include { adapter_trim; filter_bams; collect_qc; multiqc } from '../modules/shared_processes.nf'
 include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
 
 params.miniaturize = false
@@ -75,9 +75,9 @@ workflow {
 	// obtain RnaSeq metrics
 	filtered_bams
 		| get_metrics
-	// Generate MultiQC report after all analyses complete
+	// Collect QC files and generate MultiQC report
 		| collect()
-		| map { it -> "${params.outputDir}/qc_metrics" }
+		| collect_qc
 		| multiqc
 
 	// Create scaled bigwig files for visualization
@@ -515,34 +515,3 @@ process get_metrics {
 		echo "Output: ${meta.name}.rna_metrics"
 		"""
 }
-
-/*
- * MultiQC - aggregate all QC reports
- */
-process multiqc {
-	publishDir "${params.outputDir}", mode: 'copy'
-	input:
-		val(qc_dir)
-	output:
-		path "multiqc_report.html"
-		path "multiqc_data"
-	script:
-		"""
-		#!/bin/bash
-		
-		# Load required modules
-		module load multiqc
-		
-		echo "====== PROCESS_SUMMARY"
-		echo "====== MULTIQC ======"
-		echo "Strategy: Aggregate all QC reports into single report"
-		echo "\$(multiqc --version)"
-		echo "====== MULTIQC ======"
-		echo "====== PROCESS_SUMMARY"
-		
-		echo "=== Generating MultiQC report from ${qc_dir}"
-		
-		multiqc ${qc_dir} --filename multiqc_report.html
-		"""
-}
-
