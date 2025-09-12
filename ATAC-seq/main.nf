@@ -5,7 +5,7 @@ include { getSharedHelp } from '../modules/shared_help'
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
 include { MERGE_SEQUENCING_RUNS } from '../subworkflows/merge_sequencing_runs.nf'
 include { CREATE_SCALED_BIGWIGS } from '../subworkflows/create_scaled_bigwigs.nf'
-include { adapter_trim; filter_bams } from '../modules/shared_processes.nf'
+include { adapter_trim; filter_bams; collect_qc; multiqc } from '../modules/shared_processes.nf'
 include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
 
 params.miniaturize = false
@@ -58,6 +58,10 @@ workflow {
 	// Obtain counts from consensus peaks
 		| combine(peak_outputs.coverage_files)
 		| count_under_peaks
+	// Collect QC files and generate MultiQC report
+		| collect
+		| collect_qc
+		| multiqc
 	// DE analysis
 	// group by condition
 

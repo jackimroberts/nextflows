@@ -5,7 +5,7 @@ include { getSharedHelp } from '../modules/shared_help'
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
 include { CREATE_SCALED_BIGWIGS } from '../subworkflows/create_scaled_bigwigs.nf'
 include { MERGE_SEQUENCING_RUNS } from '../subworkflows/merge_sequencing_runs.nf'
-include { adapter_trim; filter_bams } from '../modules/shared_processes.nf'
+include { adapter_trim; filter_bams; collect_qc; multiqc } from '../modules/shared_processes.nf'
 include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
 
 params.miniaturize = false
@@ -57,6 +57,10 @@ workflow {
 	// obtain RnaSeq metrics
 	filtered_bams
 		| get_metrics
+	// Collect QC files and generate MultiQC report
+		| collect()
+		| collect_qc
+		| multiqc
 
 	// Create scaled bigwig files for visualization
 	CREATE_SCALED_BIGWIGS(filtered_bams)
@@ -76,6 +80,7 @@ process fastqc1 {
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path(fastqs)
+		path "*_fastqc.{html,zip}"
 	script:
 		def r1 = fastqs.find { it.name.matches('.*[-_]R1[.-_].*') }
 		def r2 = fastqs.find { it.name.matches('.*[-_]R2[.-_].*') }
@@ -105,6 +110,7 @@ process fastqc2 {
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path(fastqs)
+		path "*_fastqc.{html,zip}"
 	script:
 		"""
           	#!/bin/bash
@@ -166,6 +172,10 @@ process extract_umi {
 			-S ${meta.id}_${meta.run}.extracted.R2.fastq.gz \\
 			--read2-out=${meta.id}_${meta.run}.extracted.R1.fastq.gz \\
 			--log=extract.log
+
+		# Output only the last line of extract log
+		tail -1 extract.log
+
 		"""
 }
 
@@ -251,6 +261,8 @@ process star_align {
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path("${meta.id}_${meta.run}.raw.bam")
+		path "*Log.final.out"
+		path "*.stat"
 	script:
 		def r1 = fastqs.find { it.name.contains('.1.fq') }
 		def r2 = fastqs.find { it.name.contains('.2.fq') }
@@ -318,6 +330,7 @@ process count_features {
 		tuple val(meta), path(bam)
 	output:
 		tuple val(meta), path("${meta.name}.counts"), path("${meta.name}.biotypes")
+		path "*.summary"
 	script:
 		"""
 		#!/bin/bash
@@ -425,4 +438,5 @@ process get_metrics {
 		echo "Output: ${meta.name}.rna_metrics"
 		"""
 }
+
 
