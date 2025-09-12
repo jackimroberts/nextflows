@@ -11,6 +11,7 @@ include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
 params.miniaturize = false
 params.fastq_source = true
 params.sample_table = "*.txt"
+params.outputDir = "output"
 
 //ATAC-specific. Does not remove unmated. Removes, duplicate, unaligned, and secondary.
 params.filter = [flag: 3332]
@@ -20,6 +21,17 @@ if (params.help) {
         println """
         ATAC-seq nextflow pipeline
 ${getSharedHelp()}
+
+        ATAC-seq specific parameters:
+        --macs2.keepDup, .qvalue, .shift, .extsize, .minLength, .gsize, 
+        .args (additional command line arguments)
+                MACS2 peak calling parameters (see macs2 callpeak --help)
+                
+        --adapters.forward, .reverse, .overlap, .nextseqTrim, .minLength, .args
+                Adapter trimming parameters (see cutadapt --help)
+
+        --filter.flag integer
+                SAM filtering flags (default: 3332 for ATAC-seq)
         """
         exit 0
 }
@@ -135,7 +147,17 @@ process bowtie_align {
  * Take the 5' fragment ends as transcript locations with shift 100 ext 200
  */
 process call_peaks {
-	publishDir 'output/peaks', mode: 'copy', pattern: '*_peaks.narrowPeak'
+	publishDir "${params.outputDir}/peaks", mode: 'copy', pattern: '*_peaks.narrowPeak'
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
+	params.macs2 = [
+		keepDup: 'all',              // keep duplicate reads
+		qvalue: 0.01,                // q-value threshold
+		shift: -100,                 // shift reads (ATAC-seq specific)
+		extsize: 200,                // extend reads to this length
+		minLength: 100,              // minimum peak length
+		gsize: 2500000000,           // effective genome size
+		args: ''                     // custom MACS2 arguments
+	]
 	input:
 		tuple val(meta), path(bam)
 	output:
@@ -154,8 +176,16 @@ process call_peaks {
 		echo "Strategy: Call peaks from fragment 5' ends"
 		echo "Convert bam files to bed using bedtools \$(bedtools --version)"
 		echo "Call peaks with macs2 \$(macs2 --version)"
-		echo "--shift -100 --extsize 200 --keep-dup all"
-		echo "--qvalue 0.01 --min-length 100 --gsize 2500000000"
+		echo "Parameters:"
+		echo "  keepDup: ${params.macs2.keepDup}"
+		echo "  qvalue: ${params.macs2.qvalue}"
+		echo "  shift: ${params.macs2.shift} (ATAC-seq specific)"
+		echo "  extsize: ${params.macs2.extsize}"
+		echo "  minLength: ${params.macs2.minLength}"
+		echo "  gsize: ${params.macs2.gsize}"
+		if [ -n "${params.macs2.args}" ]; then
+			echo "  Custom args: ${params.macs2.args}"
+		fi
 		echo "====== CALL_PEAKS ======"
 		echo "====== PROCESS_SUMMARY"
 		
@@ -170,10 +200,18 @@ process call_peaks {
 		
 		# Call peaks on 5' end
 		echo "=== Call peaks from ${meta.name}.bed"
-		macs2 callpeak -t "${meta.name}.bed" -f BED -n ${meta.name} \\
-    			--keep-dup all --qvalue 0.01 \\
-    			--shift -100 --extsize 200 \\
-    			--min-length 100 --gsize 2500000000 2> "${meta.name}.macs.log"
+		macs2 callpeak \\
+			-t "${meta.name}.bed" \\
+			-f BED \\
+			-n ${meta.name} \\
+			--keep-dup ${params.macs2.keepDup} \\
+			--qvalue ${params.macs2.qvalue} \\
+			--shift ${params.macs2.shift} \\
+			--extsize ${params.macs2.extsize} \\
+			--min-length ${params.macs2.minLength} \\
+			--gsize ${params.macs2.gsize} \\
+			${params.macs2.args} \\
+			2> "${meta.name}.macs.log"
 		
 		# Extract key stats from MACS2 log
 		grep "total tags in treatment" "${meta.name}.macs.log"
@@ -195,7 +233,8 @@ process call_peaks {
  * Strategy: Keep peaks found in at least 2 samples, merge nearby peaks
  */
 process merge_peaks {
-	publishDir 'output/peaks', mode: 'copy'
+	publishDir "${params.outputDir}/peaks", mode: 'copy'
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		path(peak_files)
 	output:
@@ -251,7 +290,8 @@ process merge_peaks {
  * Uses both bedtools and featureCounts approaches for comparison
  */
 process count_under_peaks {
-	publishDir 'output/counts', mode: 'copy'
+	publishDir "${params.outputDir}/counts", mode: 'copy'
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple path(merged_peaks), val(meta), path(bam), path(bed)
 	output:

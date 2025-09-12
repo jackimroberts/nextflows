@@ -30,7 +30,8 @@ process make_sample_table {
  * Pull fastq files
  */
 process get_fastq {
-	publishDir 'output', pattern: '**md5*', mode: 'copy', overwrite: true
+	publishDir "${params.outputDir}", pattern: '**md5*', mode: 'copy', overwrite: true
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		val input_file_source
 		path sample_table_file
@@ -116,7 +117,16 @@ process miniaturize {
  * adapter trimming
  */
 process adapter_trim {
-	publishDir 'output/qc_metrics', mode: 'copy', pattern: 'cutadapt.log'
+	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: 'cutadapt.log'
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
+	params.adapters = [
+		forward: 'CTGTCTCTTATACACATCT',    // TruSeq forward adapter
+		reverse: 'CTGTCTCTTATACACATCT',    // TruSeq reverse adapter  
+		overlap: 1,                        // minimum overlap length
+		nextseqTrim: 20,                   // NextSeq quality trimming
+		minLength: 1,                      // minimum read length after trimming
+		args: ''                           // custom cutadapt arguments
+	]
 	input:
 		tuple val(meta), path(fastqs)
 	output:
@@ -125,9 +135,6 @@ process adapter_trim {
 	script:
 		"""
           	#!/bin/bash
-          	# TruSeq adapters for Active Motif ATAC-seq
-		adaptf=CTGTCTCTTATACACATCT
-		adaptr=CTGTCTCTTATACACATCT
 
 		# load cutadapt module
 		module load cutadapt
@@ -135,17 +142,31 @@ process adapter_trim {
 		echo "====== PROCESS_SUMMARY"
 		echo "====== ADAPTER_TRIM ======"
 		echo "Strategy: Remove adapters and low quality bases from reads"
-		echo "trimmed with cutadapt \$(cutadapt --version)"
-		echo "-O 1 --nextseq-trim=20 -m 1"
-		echo "forward adapter: \$adaptf"
-		echo "and reverse: \$adaptr"
+		echo "cutadapt \$(cutadapt --version)"
+		echo "Parameters:"
+		echo "  forward adapter: ${params.adapters.forward}"
+		echo "  reverse adapter: ${params.adapters.reverse}"
+		echo "  overlap: ${params.adapters.overlap}"
+		echo "  nextseqTrim: ${params.adapters.nextseqTrim}"
+		echo "  minLength: ${params.adapters.minLength}"
+		if [ -n "${params.adapters.args}" ]; then
+			echo "  Custom args: ${params.adapters.args}"
+		fi
 		echo "====== ADAPTER_TRIM ======"
 		echo "====== PROCESS_SUMMARY"
 
 		echo "=== trimming ${meta.id}_${meta.run}"
 
-		cutadapt -O 1 --nextseq-trim=20 -m 1 -a \$adaptf -A \$adaptr -j ${task.cpus} \\
-			-o ${meta.id}_${meta.run}.1.fq -p ${meta.id}_${meta.run}.2.fq \\
+		cutadapt \\
+			-O ${params.adapters.overlap} \\
+			--nextseq-trim=${params.adapters.nextseqTrim} \\
+			-m ${params.adapters.minLength} \\
+			-a ${params.adapters.forward} \\
+			-A ${params.adapters.reverse} \\
+			-j ${task.cpus} \\
+			${params.adapters.args} \\
+			-o ${meta.id}_${meta.run}.1.fq \\
+			-p ${meta.id}_${meta.run}.2.fq \\
 			$fastqs > cutadapt.log
 		
 		# Extract key stats from cutadapt log
@@ -235,7 +256,8 @@ process measure_depth {
  * convert bam files to bigwig
  */
 process bam_to_bigwig {
-	publishDir 'output/bigwigs', mode: 'copy'
+	publishDir "${params.outputDir}/bigwigs", mode: 'copy'
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple val(min_depth), val(meta), path(bam)
 	output:

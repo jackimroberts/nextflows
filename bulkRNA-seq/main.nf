@@ -11,12 +11,30 @@ include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
 params.miniaturize = false
 params.fastq_source = true
 params.sample_table = "*.txt"
+params.outputDir = "output"
 
 params.help = false
 if (params.help) {
         println """
-        ATAC-seq nextflow pipeline
+        bulkRNA-seq nextflow pipeline
 ${getSharedHelp()}
+
+        --star_index path/to/star/index 
+                Star index folder (required)
+
+        RNA-seq specific parameters:
+        --star.twopassMode, .outSAMtype, .outBAMsortingBinsN, .quantMode,
+        .outWigType, .outWigStrand, .outSAMunmapped, .args
+                STAR alignment parameters (see STAR --help)
+                
+        --counts.strandedness, .largestOverlap, .paired, .args
+                featureCounts parameters (see featureCounts --help)
+                
+        --extract_umi.pattern, .extractMethod, .args
+                UMI extraction parameters (see umi_tools extract --help)
+                
+        --adapters.forward, .reverse, .overlap, .nextseqTrim, .minLength, .args
+                Adapter trimming parameters (see cutadapt --help)
         """
         exit 0
 }
@@ -59,7 +77,7 @@ workflow {
 		| get_metrics
 	// Generate MultiQC report after all analyses complete
 		| collect()
-		| map { it -> "output/qc_metrics" }
+		| map { it -> "${params.outputDir}/qc_metrics" }
 		| multiqc
 
 	// Create scaled bigwig files for visualization
@@ -76,7 +94,8 @@ workflow.onComplete {
  * was originally part of extract_umi but the required container didn't support it
  */
 process fastqc1 {
-	publishDir 'output/qc_metrics', mode: 'copy', pattern: '*_fastqc.{html,zip}'
+	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: '*_fastqc.{html,zip}'
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple val(meta), path(fastqs)
 	output:
@@ -107,7 +126,8 @@ process fastqc1 {
  * fastqc
  */
 process fastqc2 {
-	publishDir 'output/qc_metrics', mode: 'copy', pattern: '*_fastqc.{html,zip}'
+	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: '*_fastqc.{html,zip}'
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple val(meta), path(fastqs)
 	output:
@@ -140,7 +160,12 @@ process fastqc2 {
  */
 process extract_umi {
 	container 'docker://quay.io/biocontainers/umi_tools:0.5.4--py27hdd9f355_1'
-	params.extract_umi = [pattern: 'NNNNNNNNCCCCCC']
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
+	params.extract_umi = [
+		pattern: 'NNNNNNNNCCCCCC',    // UMI pattern: N=UMI, C=barcode, X=reattached
+		extractMethod: 'string',      // extraction method
+		args: ''                      // custom umi_tools extract arguments
+	]
 	input:
 		tuple val(meta), path(fastqs)
 	output:
@@ -154,9 +179,13 @@ process extract_umi {
 		echo "====== PROCESS_SUMMARY"
 		echo "====== EXTRACT_UMI ======"
 		echo "Strategy: Extract barcode and append to read name"
-		echo " \$(umi_tools --version)"
-		echo "pattern: ${params.extract_umi.pattern}"
-		echo "N = UMI, C = barcode, X = reattached to read"
+		echo "umi_tools \$(umi_tools --version)"
+		echo "Parameters:"
+		echo "  pattern: ${params.extract_umi.pattern} (N=UMI, C=barcode, X=reattached)"
+		echo "  extractMethod: ${params.extract_umi.extractMethod}"
+		if [ -n "${params.extract_umi.args}" ]; then
+			echo "  Custom args: ${params.extract_umi.args}"
+		fi
 		echo "====== EXTRACT_UMI ======"
 		echo "====== PROCESS_SUMMARY"
 		
@@ -170,7 +199,8 @@ process extract_umi {
 			-I ${r2} \\
 			--read2-in=${r1} \\
 			--bc-pattern=${params.extract_umi.pattern} \\
-			--extract-method=string \\
+			--extract-method=${params.extract_umi.extractMethod} \\
+			${params.extract_umi.args} \\
 			-S ${meta.id}_${meta.run}.extracted.R2.fastq.gz \\
 			--read2-out=${meta.id}_${meta.run}.extracted.R1.fastq.gz \\
 			--log=extract.log
@@ -249,8 +279,9 @@ process dedup_qc {
  * alignment with star
  */
 process star_align {
-	publishDir 'output/qc_metrics', mode: 'copy', pattern: '*Log.final.out'
-	publishDir 'output/qc_metrics', mode: 'copy', pattern: '*.stat'
+	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: '*Log.final.out'
+	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: '*.stat'
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	params.star = [
 		twopassMode: 'Basic',
 		outSAMtype: 'BAM SortedByCoordinate',
@@ -258,7 +289,8 @@ process star_align {
 		quantMode: 'TranscriptomeSAM',
 		outWigType: 'bedGraph',
 		outWigStrand: 'Unstranded',
-		outSAMunmapped: 'Within'
+		outSAMunmapped: 'Within',
+		args: ''
 
 	]
 	input:
@@ -284,7 +316,17 @@ process star_align {
 		echo "\$(star --version | head -1 | awk '{print \$1,\$2,\$3}')"
 		echo "Reference: ${params.transcriptome_index}"
 		echo "RSEM Index: ${params.rsem_index}"
-		echo "Parameters: ${params.star}"
+		echo "Parameters:"
+		echo "  --twopassMode ${params.star.twopassMode}"
+		echo "  --outSAMtype ${params.star.outSAMtype}"
+		echo "  --outBAMsortingBinsN ${params.star.outBAMsortingBinsN}"
+		echo "  --quantMode ${params.star.quantMode}"
+		echo "  --outWigType ${params.star.outWigType}"
+		echo "  --outWigStrand ${params.star.outWigStrand}"
+		echo "  --outSAMunmapped ${params.star.outSAMunmapped}"
+		if [ -n "${params.star.args}" ]; then
+			echo "  Custom args: ${params.star.args}"
+		fi
 		echo "====== STAR_ALIGN ======"
 		echo "====== PROCESS_SUMMARY"
 
@@ -300,6 +342,7 @@ process star_align {
 			--outWigType ${params.star.outWigType} \\
 			--outWigStrand ${params.star.outWigStrand} \\
 			--outSAMunmapped ${params.star.outSAMunmapped} \\
+			${params.star.args} \\
 			> star.log 2>&1
 		
 		# Output only the last line of STAR stdout
@@ -328,9 +371,15 @@ process star_align {
  * Count alignments overlapping feature (genes, peaks...)
  */
 process count_features {
-	publishDir 'output/counts', mode: 'copy'
-	publishDir 'output/qc_metrics', mode: 'copy', pattern: '*.summary'
-	params.counts = '-s 2 --largestOverlap -p'
+	publishDir "${params.outputDir}/counts", mode: 'copy'
+	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: '*.summary'
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
+	params.counts = [
+		strandedness: 2,         // strandedness: 0=unstranded, 1=stranded, 2=reversely stranded
+		largestOverlap: true,    // assign reads to feature with largest overlap
+		paired: true,            // count fragments (paired-end mode)
+		args: ''                 // custom featureCounts arguments
+	]
 	input:
 		tuple val(meta), path(bam)
 	output:
@@ -345,21 +394,42 @@ process count_features {
 		
 		echo "====== PROCESS_SUMMARY"
 		echo "====== COUNT_FEATURES ======"
-		echo "Strategy: Count reads overlapping features"
+		echo "Strategy: Count reads overlapping gene features"
 		echo "subread (featureCounts) \$(subread --version)"
 		echo "Reference: ${params.gene_models}"
-		echo "Parameters: ${params.counts}"
+		echo "Parameters:"
+		echo "  strandedness: ${params.counts.strandedness} (0=unstranded, 1=stranded, 2=reversely stranded)"
+		echo "  largestOverlap: ${params.counts.largestOverlap}"
+		echo "  paired: ${params.counts.paired}"
+		if [ -n "${params.counts.args}" ]; then
+			echo "  Custom args: ${params.counts.args}"
+		fi
+
 		echo "====== COUNT_FEATURES ======"
 		echo "====== PROCESS_SUMMARY"
 
 		echo "=== Counting transcriped aligned reads for ${meta.name}"
 
-		# Count reads overlapping peaks using featureCounts
-				
-		featureCounts -T ${task.cpus} ${params.counts} -a ${params.gene_models} \\
+		# Count reads overlapping gene features using featureCounts
+		
+		# Count reads overlapping genes
+		featureCounts -T ${task.cpus} \\
+			-s ${params.counts.strandedness} \\
+			--largestOverlap ${params.counts.largestOverlap} \\
+			-p ${params.counts.paired} \\
+			${params.counts.args} \\
+			-a ${params.gene_models} \\
 			-o ${meta.name}.counts $bam
-		featureCounts -T ${task.cpus} ${params.counts} -a ${params.gene_models} \\
-			-o ${meta.name}.biotypes -g gene_biotype $bam
+		
+		# Count reads by gene biotype
+		featureCounts -T ${task.cpus} \\
+			-s ${params.counts.strandedness} \\
+			--largestOverlap ${params.counts.largestOverlap} \\
+			-p ${params.counts.paired} \\
+			${params.counts.args} \\
+			-a ${params.gene_models} \\
+			-g gene_biotype \\
+			-o ${meta.name}.biotypes $bam
 
 		# Total counts from featureCounts method (sum column 7, skip header lines)
 		featureCounts_total=\$(tail -n +3 ${meta.name}.counts | awk '{sum+=\$7} END {print sum}')
@@ -373,7 +443,7 @@ process count_features {
  * can edit .Rmd in output folder and run with -resume to use edited parameters
  */
 process run_DESeq {
-	publishDir 'output', mode: 'copy'
+	publishDir "${params.outputDir}", mode: 'copy'
 	input:
 		val(count_data)
 	output:
@@ -408,8 +478,9 @@ process run_DESeq {
  * Collect RNA-seq metrics using Picard
  */
 process get_metrics {
-	publishDir 'output/metrics', mode: 'copy'
-	publishDir 'output/qc_metrics', mode: 'copy'
+	publishDir "${params.outputDir}/metrics", mode: 'copy'
+	publishDir "${params.outputDir}/qc_metrics", mode: 'copy'
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple val(meta), path(bam)
 	output:
@@ -449,7 +520,7 @@ process get_metrics {
  * MultiQC - aggregate all QC reports
  */
 process multiqc {
-	publishDir 'output', mode: 'copy'
+	publishDir "${params.outputDir}", mode: 'copy'
 	input:
 		val(qc_dir)
 	output:

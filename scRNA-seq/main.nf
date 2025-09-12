@@ -11,6 +11,7 @@ params.fastq_source = true
 params.sample_table = "*txt"
 params.run_velocyto = false
 params.miniaturize = false
+params.outputDir = "output"
 
 params.help = false
 if (params.help) {
@@ -23,6 +24,10 @@ ${getSharedHelp()}
 
         --run_velocyto true/false
                 Run velocyto analysis (default: false)
+
+        scRNA-seq specific parameters:
+        --adapters.forward, .reverse, .overlap, .nextseqTrim, .minLength, .args
+                Adapter trimming parameters (see cutadapt --help)
 
         """
         exit 0
@@ -62,9 +67,10 @@ workflow.onComplete {
  * run cellRanger
  */
 process run_cellranger {
-	publishDir 'output', pattern: '**web_summary.html', mode: 'copy', overwrite: true
-	publishDir 'output', pattern: '**filtered_feature_bc_matrix.h5', mode: 'copy', overwrite: true
-	publishDir 'output', pattern: '**metrics_summary.csv', mode: 'copy', overwrite: true
+	publishDir "${params.outputDir}", pattern: '**web_summary.html', mode: 'copy', overwrite: true
+	publishDir "${params.outputDir}", pattern: '**filtered_feature_bc_matrix.h5', mode: 'copy', overwrite: true
+	publishDir "${params.outputDir}", pattern: '**metrics_summary.csv', mode: 'copy', overwrite: true
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple val(meta), path(fastqs, stageAs: 'fastq_folder/*')
 	output:
@@ -99,7 +105,8 @@ process run_cellranger {
  * produces loom file containing spliced and unspliced information
  */
 process run_velocyto {
-	publishDir 'output', pattern: '**loom', mode: 'copy', overwrite: true
+	publishDir "${params.outputDir}", pattern: '**loom', mode: 'copy', overwrite: true
+	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		path cellRanger_out
 	output:

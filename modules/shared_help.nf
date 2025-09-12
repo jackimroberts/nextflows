@@ -14,6 +14,9 @@ def getSharedHelp() {
                         ID is the unique fastq file prefix
 
         OPTIONAL PARAMETERS:
+        --outputDir path
+                Output directory for results (default: output)
+        
         --miniaturize true/false
                 Create mini fastq files of 2,500 reads for testing (default: false)
 
