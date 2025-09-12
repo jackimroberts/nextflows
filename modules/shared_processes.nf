@@ -167,10 +167,10 @@ process adapter_trim {
 			${params.adapters.args} \\
 			-o ${meta.id}_${meta.run}.1.fq \\
 			-p ${meta.id}_${meta.run}.2.fq \\
-			$fastqs > cutadapt.log
+			$fastqs > ${meta.id}_${meta.run}_cutadapt.log
 		
 		# Extract key stats from cutadapt log
-		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' cutadapt.log | head -n -1
+		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' ${meta.id}_${meta.run}_cutadapt.log | head -n -1
 		
 		"""
 }
@@ -249,6 +249,89 @@ process measure_depth {
 		## Calculate size for eventual scaling
 		samtools view -f 64 -c $bam
 
+		"""
+}
+
+/*
+ * Collect QC files from successful processes
+ */
+process collect_qc {
+	publishDir "${params.outputDir}/qc_metrics", mode: 'move'
+	input:
+		val trigger
+	output:
+		path "qc_metrics"
+	script:
+		"""
+		#!/bin/bash
+		
+		echo "====== PROCESS_SUMMARY"
+		echo "====== COLLECT_QC ======"
+		echo "Strategy: Collect QC files from completed processes"
+		echo "Searches work directories for QC log files"
+		echo "====== COLLECT_QC ======"
+		echo "====== PROCESS_SUMMARY"
+		
+		mkdir -p qc_metrics
+		
+		# Collect cutadapt logs
+		find ${launchDir}/work/*/*/*cutadapt.log -exec cp {} qc_metrics/ \\; 2>/dev/null || true
+		
+		# Collect STAR logs
+		find ${launchDir}/work/*/*/*Log.final.out -exec cp {} qc_metrics/ \\; 2>/dev/null || true
+		
+		# Collect MACS2 logs
+		find ${launchDir}/work/*/*/*macs.log -exec cp {} qc_metrics/ \\; 2>/dev/null || true
+		
+		# Collect Bowtie2 logs
+		find ${launchDir}/work/*/*/*bowtie.log -exec cp {} qc_metrics/ \\; 2>/dev/null || true
+		
+		# Collect FastQC files
+		find ${launchDir}/work/*/*/*_fastqc.html -exec cp {} qc_metrics/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*_fastqc.zip -exec cp {} qc_metrics/ \\; 2>/dev/null || true
+		
+		# Collect featureCounts summaries
+		find ${launchDir}/work/*/*/*summary -exec cp {} qc_metrics/ \\; 2>/dev/null || true
+		
+		# Collect STAR stat files
+		find ${launchDir}/work/*/*/*stat -exec cp {} qc_metrics/ \\; 2>/dev/null || true
+		
+		# Collect RNA metrics files
+		find ${launchDir}/work/*/*/*rna_metrics -exec cp {} qc_metrics/ \\; 2>/dev/null || true
+		
+		# Show what was collected
+		echo "=== Collected QC files:"
+		ls -la qc_metrics/ || echo "No QC files found"
+		"""
+}
+
+/*
+ * MultiQC - aggregate all QC reports
+ */
+process multiqc {
+	publishDir "${params.outputDir}", mode: 'copy'
+	input:
+		path(qc_metrics_dir)
+	output:
+		path "multiqc_report.html"
+		path "multiqc_data"
+	script:
+		"""
+		#!/bin/bash
+		
+		# Load required modules
+		module load multiqc
+		
+		echo "====== PROCESS_SUMMARY"
+		echo "====== MULTIQC ======"
+		echo "Strategy: Aggregate all QC reports into single report"
+		echo "\$(multiqc --version)"
+		echo "====== MULTIQC ======"
+		echo "====== PROCESS_SUMMARY"
+		
+		echo "=== Generating MultiQC report from ${qc_metrics_dir}"
+		
+		multiqc ${qc_metrics_dir} --filename multiqc_report.html
 		"""
 }
 
