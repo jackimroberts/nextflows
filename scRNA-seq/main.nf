@@ -70,7 +70,6 @@ process run_cellranger {
 	publishDir "${params.outputDir}", pattern: '**web_summary.html', mode: 'copy', overwrite: true
 	publishDir "${params.outputDir}", pattern: '**filtered_feature_bc_matrix.h5', mode: 'copy', overwrite: true
 	publishDir "${params.outputDir}", pattern: '**metrics_summary.csv', mode: 'copy', overwrite: true
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple val(meta), path(fastqs, stageAs: 'fastq_folder/*')
 	output:
@@ -106,7 +105,6 @@ process run_cellranger {
  */
 process run_velocyto {
 	publishDir "${params.outputDir}", pattern: '**loom', mode: 'copy', overwrite: true
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		path cellRanger_out
 	output:

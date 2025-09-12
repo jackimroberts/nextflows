@@ -94,8 +94,6 @@ workflow.onComplete {
  * was originally part of extract_umi but the required container didn't support it
  */
 process fastqc1 {
-	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: '*_fastqc.{html,zip}'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple val(meta), path(fastqs)
 	output:
@@ -126,8 +124,6 @@ process fastqc1 {
  * fastqc
  */
 process fastqc2 {
-	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: '*_fastqc.{html,zip}'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple val(meta), path(fastqs)
 	output:
@@ -160,7 +156,6 @@ process fastqc2 {
  */
 process extract_umi {
 	container 'docker://quay.io/biocontainers/umi_tools:0.5.4--py27hdd9f355_1'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	params.extract_umi = [
 		pattern: 'NNNNNNNNCCCCCC',    // UMI pattern: N=UMI, C=barcode, X=reattached
 		extractMethod: 'string',      // extraction method
@@ -279,9 +274,6 @@ process dedup_qc {
  * alignment with star
  */
 process star_align {
-	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: '*Log.final.out'
-	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: '*.stat'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	params.star = [
 		twopassMode: 'Basic',
 		outSAMtype: 'BAM SortedByCoordinate',
@@ -372,8 +364,6 @@ process star_align {
  */
 process count_features {
 	publishDir "${params.outputDir}/counts", mode: 'copy'
-	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: '*.summary'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	params.counts = [
 		strandedness: 2,         // strandedness: 0=unstranded, 1=stranded, 2=reversely stranded
 		largestOverlap: true,    // assign reads to feature with largest overlap
@@ -479,8 +469,6 @@ process run_DESeq {
  */
 process get_metrics {
 	publishDir "${params.outputDir}/metrics", mode: 'copy'
-	publishDir "${params.outputDir}/qc_metrics", mode: 'copy'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple val(meta), path(bam)
 	output:

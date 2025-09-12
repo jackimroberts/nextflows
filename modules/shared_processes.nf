@@ -31,7 +31,6 @@ process make_sample_table {
  */
 process get_fastq {
 	publishDir "${params.outputDir}", pattern: '**md5*', mode: 'copy', overwrite: true
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		val input_file_source
 		path sample_table_file
@@ -117,8 +116,6 @@ process miniaturize {
  * adapter trimming
  */
 process adapter_trim {
-	publishDir "${params.outputDir}/qc_metrics", mode: 'copy', pattern: 'cutadapt.log'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	params.adapters = [
 		forward: 'CTGTCTCTTATACACATCT',    // TruSeq forward adapter
 		reverse: 'CTGTCTCTTATACACATCT',    // TruSeq reverse adapter  
@@ -340,7 +337,6 @@ process multiqc {
  */
 process bam_to_bigwig {
 	publishDir "${params.outputDir}/bigwigs", mode: 'copy'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple val(min_depth), val(meta), path(bam)
 	output:

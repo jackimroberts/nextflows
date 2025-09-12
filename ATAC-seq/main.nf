@@ -152,7 +152,6 @@ process bowtie_align {
  */
 process call_peaks {
 	publishDir "${params.outputDir}/peaks", mode: 'copy', pattern: '*_peaks.narrowPeak'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	params.macs2 = [
 		keepDup: 'all',              // keep duplicate reads
 		qvalue: 0.01,                // q-value threshold
@@ -238,7 +237,6 @@ process call_peaks {
  */
 process merge_peaks {
 	publishDir "${params.outputDir}/peaks", mode: 'copy'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		path(peak_files)
 	output:
@@ -295,7 +293,6 @@ process merge_peaks {
  */
 process count_under_peaks {
 	publishDir "${params.outputDir}/counts", mode: 'copy'
-	publishDir "${params.outputDir}/pipeline_logs", mode: 'copy', pattern: '.command.{out,err,log}'
 	input:
 		tuple path(merged_peaks), val(meta), path(bam), path(bed)
 	output:
