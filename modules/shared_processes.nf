@@ -116,10 +116,12 @@ process miniaturize {
  * adapter trimming
  */
 process adapter_trim {
+	publishDir 'output/qc_metrics', mode: 'copy', pattern: 'cutadapt.log'
 	input:
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path('*fq')
+		path "cutadapt.log"
 	script:
 		"""
           	#!/bin/bash
@@ -149,12 +151,6 @@ process adapter_trim {
 		# Extract key stats from cutadapt log
 		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' cutadapt.log | head -n -1
 		
-		# Count reads in input files (assuming gzipped)
-		read_count=\$(( \$(gunzip -c ${fastqs[0]} | wc -l) / 4 ))
-		echo "\$read_count paired reads before trimming"
-
-		read_count=\$(( \$(wc -l < ${meta.id}_${meta.run}.1.fq) / 4 ))
-		echo "\$read_count paired reads after trimming"
 		"""
 }
 

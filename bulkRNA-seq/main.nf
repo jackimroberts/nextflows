@@ -57,6 +57,10 @@ workflow {
 	// obtain RnaSeq metrics
 	filtered_bams
 		| get_metrics
+	// Generate MultiQC report after all analyses complete
+		| collect()
+		| map { it -> "output/qc_metrics" }
+		| multiqc
 
 	// Create scaled bigwig files for visualization
 	CREATE_SCALED_BIGWIGS(filtered_bams)
@@ -72,10 +76,12 @@ workflow.onComplete {
  * was originally part of extract_umi but the required container didn't support it
  */
 process fastqc1 {
+	publishDir 'output/qc_metrics', mode: 'copy', pattern: '*_fastqc.{html,zip}'
 	input:
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path(fastqs)
+		path "*_fastqc.{html,zip}"
 	script:
 		def r1 = fastqs.find { it.name.matches('.*[-_]R1[.-_].*') }
 		def r2 = fastqs.find { it.name.matches('.*[-_]R2[.-_].*') }
@@ -101,10 +107,12 @@ process fastqc1 {
  * fastqc
  */
 process fastqc2 {
+	publishDir 'output/qc_metrics', mode: 'copy', pattern: '*_fastqc.{html,zip}'
 	input:
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path(fastqs)
+		path "*_fastqc.{html,zip}"
 	script:
 		"""
           	#!/bin/bash
@@ -166,6 +174,10 @@ process extract_umi {
 			-S ${meta.id}_${meta.run}.extracted.R2.fastq.gz \\
 			--read2-out=${meta.id}_${meta.run}.extracted.R1.fastq.gz \\
 			--log=extract.log
+
+		# Output only the last line of extract log
+		tail -1 extract.log
+
 		"""
 }
 
@@ -237,6 +249,8 @@ process dedup_qc {
  * alignment with star
  */
 process star_align {
+	publishDir 'output/qc_metrics', mode: 'copy', pattern: '*Log.final.out'
+	publishDir 'output/qc_metrics', mode: 'copy', pattern: '*.stat'
 	params.star = [
 		twopassMode: 'Basic',
 		outSAMtype: 'BAM SortedByCoordinate',
@@ -251,6 +265,8 @@ process star_align {
 		tuple val(meta), path(fastqs)
 	output:
 		tuple val(meta), path("${meta.id}_${meta.run}.raw.bam")
+		path "*Log.final.out"
+		path "*.stat"
 	script:
 		def r1 = fastqs.find { it.name.contains('.1.fq') }
 		def r2 = fastqs.find { it.name.contains('.2.fq') }
@@ -313,11 +329,13 @@ process star_align {
  */
 process count_features {
 	publishDir 'output/counts', mode: 'copy'
+	publishDir 'output/qc_metrics', mode: 'copy', pattern: '*.summary'
 	params.counts = '-s 2 --largestOverlap -p'
 	input:
 		tuple val(meta), path(bam)
 	output:
 		tuple val(meta), path("${meta.name}.counts"), path("${meta.name}.biotypes")
+		path "*.summary"
 	script:
 		"""
 		#!/bin/bash
@@ -391,6 +409,7 @@ process run_DESeq {
  */
 process get_metrics {
 	publishDir 'output/metrics', mode: 'copy'
+	publishDir 'output/qc_metrics', mode: 'copy'
 	input:
 		tuple val(meta), path(bam)
 	output:
@@ -423,6 +442,36 @@ process get_metrics {
 			OUTPUT=${meta.name}.rna_metrics
 		
 		echo "Output: ${meta.name}.rna_metrics"
+		"""
+}
+
+/*
+ * MultiQC - aggregate all QC reports
+ */
+process multiqc {
+	publishDir 'output', mode: 'copy'
+	input:
+		val(qc_dir)
+	output:
+		path "multiqc_report.html"
+		path "multiqc_data"
+	script:
+		"""
+		#!/bin/bash
+		
+		# Load required modules
+		module load multiqc
+		
+		echo "====== PROCESS_SUMMARY"
+		echo "====== MULTIQC ======"
+		echo "Strategy: Aggregate all QC reports into single report"
+		echo "\$(multiqc --version)"
+		echo "====== MULTIQC ======"
+		echo "====== PROCESS_SUMMARY"
+		
+		echo "=== Generating MultiQC report from ${qc_dir}"
+		
+		multiqc ${qc_dir} --filename multiqc_report.html
 		"""
 }
 
