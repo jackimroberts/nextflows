@@ -1,13 +1,5 @@
 #!/usr/bin/env nextflow
 
-// Include subworkflows and shared help
-include { getSharedHelp } from '../modules/shared_help'
-include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
-include { MERGE_SEQUENCING_RUNS } from '../subworkflows/merge_sequencing_runs.nf'
-include { CREATE_SCALED_BIGWIGS } from '../subworkflows/create_scaled_bigwigs.nf'
-include { adapter_trim; filter_bams; collect_qc; multiqc } from '../modules/shared_processes.nf'
-include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
-
 params.miniaturize = false
 params.fastq_source = true
 params.sample_table = "*.txt"
@@ -15,6 +7,14 @@ params.outputDir = "output"
 
 //ATAC-specific. Does not remove unmated. Removes, duplicate, unaligned, and secondary.
 params.filter = [flag: 3332]
+
+// Include subworkflows and shared help
+include { getSharedHelp } from '../modules/shared_help'
+include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
+include { MERGE_SEQUENCING_RUNS } from '../subworkflows/merge_sequencing_runs.nf'
+include { CREATE_SCALED_BIGWIGS } from '../subworkflows/create_scaled_bigwigs.nf'
+include { adapter_trim; filter_bams; collect_qc; multiqc } from '../modules/shared_processes.nf'
+include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
 
 params.help = false
 if (params.help) {
@@ -31,6 +31,7 @@ ${getSharedHelp()}
                 Adapter trimming parameters (see cutadapt --help)
 
         --filter.flag integer
+		--filter.flag 3332 or --filter ["flag": 3332]
                 SAM filtering flags (default: 3332 for ATAC-seq)
         """
         exit 0

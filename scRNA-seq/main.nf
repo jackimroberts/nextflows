@@ -1,10 +1,5 @@
 #!/usr/bin/env nextflow
 
-// Include subworkflows and shared help
-include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
-include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
-include { getSharedHelp } from '../modules/shared_help'
-
 params.expected_cell_number = 10000
 params.fastq_source = true
 //params.fastq_source = "empty"
@@ -12,6 +7,11 @@ params.sample_table = "*txt"
 params.run_velocyto = false
 params.miniaturize = false
 params.outputDir = "output"
+
+// Include subworkflows and shared help
+include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
+include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
+include { getSharedHelp } from '../modules/shared_help'
 
 params.help = false
 if (params.help) {

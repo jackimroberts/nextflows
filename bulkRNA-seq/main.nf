@@ -1,5 +1,13 @@
 #!/usr/bin/env nextflow
 
+params.miniaturize = false
+params.fastq_source = true
+params.sample_table = "*.txt"
+params.outputDir = "output"
+
+//RNA-seq specific. Removes duplicate, secondary, unaligned and unmated.
+params.filter = [flag: 3340, args_markdup: "--barcode-name"]
+
 // Include subworkflows and shared help
 include { getSharedHelp } from '../modules/shared_help'
 include { FASTQ_PREPROCESSING } from '../subworkflows/fastq_preprocessing.nf'
@@ -7,11 +15,6 @@ include { CREATE_SCALED_BIGWIGS } from '../subworkflows/create_scaled_bigwigs.nf
 include { MERGE_SEQUENCING_RUNS } from '../subworkflows/merge_sequencing_runs.nf'
 include { adapter_trim; filter_bams; collect_qc; multiqc } from '../modules/shared_processes.nf'
 include { WorkflowCompletion } from '../subworkflows/workflow_complete.nf'
-
-params.miniaturize = false
-params.fastq_source = true
-params.sample_table = "*.txt"
-params.outputDir = "output"
 
 params.help = false
 if (params.help) {
@@ -76,7 +79,7 @@ workflow {
 	filtered_bams
 		| get_metrics
 	// Collect QC files and generate MultiQC report
-		| collect()
+		| collect
 		| collect_qc
 		| multiqc
 
@@ -380,7 +383,7 @@ process count_features {
 		echo "====== PROCESS_SUMMARY"
 		echo "====== COUNT_FEATURES ======"
 		echo "Strategy: Count reads overlapping gene features"
-		echo "subread (featureCounts) \$(subread --version)"
+		echo "subread (featureCounts) \$(featureCounts -v 2>&1 | head -1)"
 		echo "Reference: ${params.gene_models}"
 		echo "Parameters:"
 		echo "  strandedness: ${params.counts.strandedness} (0=unstranded, 1=stranded, 2=reversely stranded)"
@@ -400,8 +403,8 @@ process count_features {
 		# Count reads overlapping genes
 		featureCounts -T ${task.cpus} \\
 			-s ${params.counts.strandedness} \\
-			--largestOverlap ${params.counts.largestOverlap} \\
-			-p ${params.counts.paired} \\
+			${ params.counts.largestOverlap ? '--largestOverlap' : '' } \\
+			${ params.counts.paired ? '-p' : '' } \\
 			${params.counts.args} \\
 			-a ${params.gene_models} \\
 			-o ${meta.name}.counts $bam
@@ -409,8 +412,8 @@ process count_features {
 		# Count reads by gene biotype
 		featureCounts -T ${task.cpus} \\
 			-s ${params.counts.strandedness} \\
-			--largestOverlap ${params.counts.largestOverlap} \\
-			-p ${params.counts.paired} \\
+			${ params.counts.largestOverlap ? '--largestOverlap' : '' } \\
+			${ params.counts.paired ? '-p' : '' } \\
 			${params.counts.args} \\
 			-a ${params.gene_models} \\
 			-g gene_biotype \\
@@ -428,11 +431,10 @@ process count_features {
  * can edit .Rmd in output folder and run with -resume to use edited parameters
  */
 process run_DESeq {
-	publishDir "${params.outputDir}", mode: 'copy'
 	input:
 		val(count_data)
 	output:
-		tuple path("*.html"), path("DESeq_results")
+		val _
 	script:
 		"""
 		#!/bin/bash
@@ -463,7 +465,6 @@ process run_DESeq {
  * Collect RNA-seq metrics using Picard
  */
 process get_metrics {
-	publishDir "${params.outputDir}/metrics", mode: 'copy'
 	input:
 		tuple val(meta), path(bam)
 	output:
