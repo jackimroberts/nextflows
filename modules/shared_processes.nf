@@ -280,31 +280,48 @@ process collect_qc {
 		mkdir -p qc_metrics/rna_metrics
 		mkdir -p qc_metrics/feature_counts
 		mkdir -p qc_metrics/peak_calling
+		mkdir -p qc_metrics/rsem
+		mkdir -p qc_metrics/samtools
+		mkdir -p qc_metrics/fastq_screen
 
 		# Collect FastQC files
-		find ${launchDir}/work/*/*/*_fastqc.html -exec cp {} qc_metrics/fastqc/ \\; 2>/dev/null || true
-		find ${launchDir}/work/*/*/*_fastqc.zip -exec cp {} qc_metrics/fastqc/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*_fastqc.html -exec rsync -u {} qc_metrics/fastqc/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*_fastqc.zip -exec rsync -u {} qc_metrics/fastqc/ \\; 2>/dev/null || true
 
 		# Collect trimming logs
-		find ${launchDir}/work/*/*/*cutadapt.log -exec cp {} qc_metrics/trimming/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*cutadapt.log -exec rsync -u {} qc_metrics/trimming/ \\; 2>/dev/null || true
 
 		# Collect STAR alignment logs
-		find ${launchDir}/work/*/*/*Log.final.out -exec cp {} qc_metrics/alignment/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*Log.final.out -exec rsync -u {} qc_metrics/alignment/ \\; 2>/dev/null || true
 		# Collect Bowtie2 logs (alternative aligners)
-		find ${launchDir}/work/*/*/*bowtie.log -exec cp {} qc_metrics/alignment/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*bowtie.log -exec rsync -u {} qc_metrics/alignment/ \\; 2>/dev/null || true
 
 		# Collect RNA metrics files
-		find ${launchDir}/work/*/*/*rna_metrics -exec cp {} qc_metrics/rna_metrics/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*rna_metrics -exec rsync -u {} qc_metrics/rna_metrics/ \\; 2>/dev/null || true
 
-		# Collect featureCounts summaries (specific file extensions)
-		find ${launchDir}/work/*/*/*counts.summary -exec cp {} qc_metrics/feature_counts/ \\; 2>/dev/null || true
-		find ${launchDir}/work/*/*/*biotypes.summary -exec cp {} qc_metrics/feature_counts/ \\; 2>/dev/null || true
+		# Collect featureCounts summaries
+		find ${launchDir}/work/*/*/*counts.summary -exec rsync -u {} qc_metrics/feature_counts/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*biotypes.summary -exec rsync -u {} qc_metrics/feature_counts/ \\; 2>/dev/null || true
 
 		# Collect MACS2 logs (for ATAC-seq peak calling)
-		find ${launchDir}/work/*/*/*macs.log -exec cp {} qc_metrics/peak_calling/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*macs.log -exec rsync -u {} qc_metrics/peak_calling/ \\; 2>/dev/null || true
 
-		# Skip collection of .stat directories (they contain analysis files, not QC metrics)
+		# Collect RSEM results files (for RNA-seq transcriptome quantification)
+		find ${launchDir}/work/*/*/*genes.results -exec rsync -u {} qc_metrics/rsem/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*isoforms.results -exec rsync -u {} qc_metrics/rsem/ \\; 2>/dev/null || true
+
+		# Collect samtools stats/flagstat files
+		find ${launchDir}/work/*/*/*stats -exec rsync -u {} qc_metrics/samtools/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*flagstat -exec rsync -u {} qc_metrics/samtools/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*idxstats -exec rsync -u {} qc_metrics/samtools/ \\; 2>/dev/null || true
+
+		# Collect FastQ Screen files
+		find ${launchDir}/work/*/*/*screen.txt -exec rsync -u {} qc_metrics/fastq_screen/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*screen.html -exec rsync -u {} qc_metrics/fastq_screen/ \\; 2>/dev/null || true
 		
+		# Remove empty folders
+		find qc_metrics -type d -empty -delete
+
 		# Show what was collected
 		echo "=== Collected QC files:"
 		ls -la qc_metrics/*/ || echo "No QC files found"
