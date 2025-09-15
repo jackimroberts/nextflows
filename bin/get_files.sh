@@ -60,7 +60,8 @@ for source in "${SOURCES[@]}"; do
 		echo "Processing source: $source"
 		module load aria2
 
-		aria2c -i "${launch_dir}/core_links" -j $cpus -x 16
+		aria2c -i "${launch_dir}/core_links" -j $cpus -x 16 > CoreBrowser.log 2>&1
+		sed -n '/Download Results:/,$p' CoreBrowser.log
 
 	elif [[ "$source" == *":"* ]]; then
 		echo "=== downloading fastq files from UCSF core"

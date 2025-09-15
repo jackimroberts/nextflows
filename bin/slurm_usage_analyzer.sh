@@ -132,7 +132,7 @@ get_job_status() {
             0) echo "COMPLETED" ;;
             127) echo "CMD_NOT_FOUND" ;;
             137) echo "OOM_KILLED" ;;
-            143) echo "USER_CANCEL" ;;
+            143) echo "CANCELLED" ;;
             "") echo "COMPLETED" ;;
             *) echo "FAILED($exit_code)" ;;
         esac
