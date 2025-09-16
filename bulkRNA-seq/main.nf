@@ -6,7 +6,8 @@ params.sample_table = "*.txt"
 params.outputDir = "output"
 
 //RNA-seq specific. Removes duplicate, secondary, unaligned and unmated.
-params.filter = [flag: 3340, args_markdup: "--barcode-name"]
+params.filter = [flag: 3340,
+	args_markdup: " --barcode-rgx '_([^_]+)\$'"] //extract umi format is: read_barcode_umi
 
 // Include subworkflows and shared help
 include { getSharedHelp } from '../modules/shared_help'
