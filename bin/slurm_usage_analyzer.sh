@@ -129,11 +129,11 @@ get_job_status() {
     if [[ -f "$task_dir/.exitcode" ]]; then
         local exit_code=$(cat "$task_dir/.exitcode" 2>/dev/null | tr -d '\n\r' | head -c 10)
         case "$exit_code" in
-            0) echo "COMPLETED" ;;
+            0) echo "COMPLETE" ;;
             127) echo "CMD_NOT_FOUND" ;;
             137) echo "OOM_KILLED" ;;
             143) echo "CANCELLED" ;;
-            "") echo "COMPLETED" ;;
+            "") echo "COMPLETE" ;;
             *) echo "FAILED($exit_code)" ;;
         esac
     elif [[ "$job_id" =~ ^[0-9]+$ ]]; then
@@ -263,7 +263,7 @@ for task_dir in "$work_pattern"/*/*; do
     fi
     
     # Store job data with submit_time for sorting
-    job_data+=("$submit_time|${process_name:0:20}|$nextflow_id|$job_id|$cpus_req|$mem_req_gb|$mem_usage|$cpu_usage|$elapsed|$queue_wait|$status")
+    job_data+=("$submit_time|${process_name:0:20}|$nextflow_id|$job_id|$cpus_req|$mem_req_gb|$cpu_usage|$mem_usage|$elapsed|$queue_wait|$status")
 done
 
 # Sort by submit_time and display (skip submit_time in output)
@@ -272,13 +272,13 @@ IFS=$'\n' sorted_data=($(sort -t'|' -k1,1n <<< "${job_data[*]}"))
 {
 # Column headers
 printf "%-20s %-6s %-8s %-4s %-7s %-10s %-10s %-10s %-10s %-12s\n" \
-    "Process" "Nf_ID" "SLURM_ID" "CPUs" "Mem(GB)" "%_Mem_Use" "%_CPU_Use" "Time_Use" "Queue_Wait" "Status"
+    "Process" "Nf_ID" "SLURM_ID" "CPUs" "Mem(GB)" "%_CPU_Use" "%_Mem_Use" "Time_Use" "Queue_Wait" "Status"
 echo "$(printf '%*s' 106 '' | tr ' ' '-')"
 
 for line in "${sorted_data[@]}"; do
-    IFS='|' read -r submit_time process nextflow_id job_id cpus_req mem_req_gb mem_usage cpu_usage elapsed queue_wait status <<< "$line"
+    IFS='|' read -r submit_time process nextflow_id job_id cpus_req mem_req_gb cpu_usage mem_usage elapsed queue_wait status <<< "$line"
     printf "%-20s %-6s %-8s %-4s %-7s %-10s %-10s %-10s %-10s %-12s\n" \
-        "$process" "$nextflow_id" "$job_id" "$cpus_req" "$mem_req_gb" "$mem_usage" "$cpu_usage" "$elapsed" "$queue_wait" "$status"
+        "$process" "$nextflow_id" "$job_id" "$cpus_req" "$mem_req_gb" "$cpu_usage" "$mem_usage" "$elapsed" "$queue_wait" "$status"
 done
 
 echo
@@ -287,7 +287,7 @@ echo "- CPUs_Req: Number of CPU cores requested"
 echo "- Mem_Req: Memory in GB requested"
 echo "- %_Mem_Use: Memory efficiency (used/requested * 100)"
 echo "- %_CPU_Use: CPU efficiency (actual CPU time/allocated CPU time * 100)"
-echo "- Time_Use: Actual runtime (* indicates job still running)"
-echo "- Queue_Wait: Time spent waiting in SLURM queue (* indicates still queued)"
+echo "- Time_Use: Actual runtime"
+echo "- Queue_Wait: Time spent waiting in SLURM queue"
 echo "- Status: Job completion status"
 } > "$OUT_DIR/slurm_analysis.txt"
