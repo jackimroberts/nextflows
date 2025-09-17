@@ -78,7 +78,7 @@ samtools index $sample.dup.bam
 samtools idxstats $sample.dup.bam | sort -V > $sample.idxstats
 
 ## Count reads efficiently in single pass
-samtools view $sample.dup.bam | awk '
+read_counts=$(samtools view $sample.dup.bam | awk '
 BEGIN {total=0; unaligned=0; secondary=0; unmated=0}
 {
     total++
@@ -88,11 +88,19 @@ BEGIN {total=0; unaligned=0; secondary=0; unmated=0}
     if (and(flag, 8)) unmated++
 }
 END {
-    print total ": Initial reads"
-    print unaligned " : unaligned"
-    print secondary " : secondary"
-    print unmated " : unmated"
-}'
+    print total " " unaligned " " secondary " " unmated
+}')
+
+# Extract individual counts and display
+initial_reads=$(echo $read_counts | cut -d' ' -f1)
+unaligned_reads=$(echo $read_counts | cut -d' ' -f2)
+secondary_reads=$(echo $read_counts | cut -d' ' -f3)
+unmated_reads=$(echo $read_counts | cut -d' ' -f4)
+
+echo "$initial_reads: Initial reads"
+echo "$unaligned_reads : unaligned"
+echo "$secondary_reads : secondary"
+echo "$unmated_reads : unmated"
 
 ## Parse markdup statistics from stderr output
 total_duplicates=$(grep "DUPLICATE TOTAL:" $sample.duplicate.stats | awk '{print $3}')
@@ -122,7 +130,23 @@ samtools index $sample.filt.bam
 
 ## Remove blacklist regions if provided
 if [ -f "$blacklist" ]; then
-	bedtools intersect -v -abam $sample.filt.bam -b $blacklist > $sample.filtered.bam
+	# Check if chromosome names match between BAM and blacklist
+	bam_chr=$(head -1 $sample.idxstats | cut -f1)
+	blacklist_chr=$(head -1 $blacklist | cut -f1)
+
+	if [[ "$bam_chr" == chr* && "$blacklist_chr" != chr* ]]; then
+		# Add chr prefix to blacklist
+		awk '{print "chr"$0}' $blacklist > blacklist.fixed.bed
+		blacklist_file=blacklist.fixed.bed
+	elif [[ "$bam_chr" != chr* && "$blacklist_chr" == chr* ]]; then
+		# Remove chr prefix from blacklist
+		sed 's/^chr//' $blacklist > blacklist.fixed.bed
+		blacklist_file=blacklist.fixed.bed
+	else
+		blacklist_file=$blacklist
+	fi
+
+	bedtools intersect -v -abam $sample.filt.bam -b $blacklist_file > $sample.filtered.bam
 	blacklist_removed=$(($reads_after_filter - $(samtools view -c $sample.filtered.bam)))
 	echo "$blacklist_removed : blacklisted"
 else
