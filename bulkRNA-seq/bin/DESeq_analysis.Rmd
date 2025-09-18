@@ -18,8 +18,8 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE,
 
 if (!require("pacman")) install.packages("pacman")
 
-pacman::p_load(tidyverse,DESeq2,pheatmap,biomaRt,ggrepel,
-               RColorBrewer,knitr,clusterProfiler,msigdbr,fgsea,openxlsx)
+pacman::p_load(DESeq2,pheatmap,biomaRt,ggrepel,
+               RColorBrewer,knitr,clusterProfiler,msigdbr,fgsea,openxlsx,tidyverse,rtracklayer)
 
 set.seed(1234)
 
@@ -139,15 +139,61 @@ write_rds(dds, file.path(save_dir, "DESeq.rds"))
 ### Retrieve gene names to replace geneIDs
 
 ```{r gene_names}
-# retrieve gene annotations from Ensembl using biomaRt
-mart <- mart <- useMart(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
+# retrieve gene annotations from Ensembl using biomaRt with error handling
+g <- tibble()
 
-# query biomaRt to get gene names for gene IDs
-g <- getBM(filters = "ensembl_gene_id", 
-           attributes = c("ensembl_gene_id", "external_gene_name",
-                          "chromosome_name","description"),
-           values = rownames(dds), 
-           mart = mart)
+try({
+  mart <- useMart(biomart = "ensembl", dataset = "mmusculus_gene_ensembl")
+
+  # query biomaRt to get gene names for gene IDs
+  g <- getBM(filters = "ensembl_gene_id",
+             attributes = c("ensembl_gene_id", "external_gene_name",
+                            "chromosome_name","description"),
+             values = rownames(dds),
+             mart = mart)
+}, silent = TRUE)
+
+
+# if biomaRt failed, try to load annotations from GTF file
+if (nrow(g) == 0) {
+  cat("biomaRt failed - trying to load annotations from GTF file\n")
+
+  # Find GTF file in database directory (since gene_models is typically ${database}/*gtf)
+  gtf_files <- Sys.glob(file.path(database, "*gtf"))
+
+  if (length(gtf_files) > 0) {
+    cat("Found GTF file:", gtf_files[1], "\n")
+
+    try({
+      # Read GTF file using rtracklayer
+      gtf <- import(gtf_files[1])
+
+      # Extract gene-level annotations
+      genes <- gtf[gtf$type == "gene"]
+
+      # Create annotation table
+      g <- tibble(
+        ensembl_gene_id = genes$gene_id,
+        external_gene_name = ifelse(is.na(genes$gene_name), genes$gene_id, genes$gene_name),
+        chromosome_name = as.character(seqnames(genes)),
+        gene_biotype = genes$gene_biotype
+      ) %>%
+        filter(ensembl_gene_id %in% rownames(dds)) %>%
+        distinct(ensembl_gene_id, .keep_all = TRUE)
+    }, silent = TRUE)
+  }
+
+  # if GTF loading also failed, create dummy annotations
+  if (nrow(g) == 0) {
+    cat("GTF loading failed - creating dummy gene annotations\n")
+    g <- tibble(
+      ensembl_gene_id = rownames(dds),
+      external_gene_name = rownames(dds),
+      chromosome_name = "unknown",
+      description = "unknown"
+    )
+  }
+}
 
 cat("Retrieved gene names for", nrow(g), "out of", nrow(dds), "transcripts\n")
 
@@ -166,25 +212,6 @@ write_tsv(counts, file.path(save_dir, "gene_counts.tsv"))
 ```{r plots}
 # apply vst normalization for visualizations
 vsd <- vst(dds, blind = FALSE)
-
-# data for 20 most highly expressed transcrips
-select <- order(rowMeans(counts(dds, normalized = TRUE)), 
-                decreasing = TRUE)[1:20]
-
-# prepare with gene name instead of IDs
-heatmap_data <- as.data.frame(assay(vsd)[select, ]) %>% 
-  rownames_to_column("ensembl_gene_id") %>% 
-  left_join(g[,1:2], by = "ensembl_gene_id") %>% 
-  select(-ensembl_gene_id) %>%
-  column_to_rownames("external_gene_name")
-
-# create heatmap of top expressed genes
-p <- pheatmap(heatmap_data, 
-         cluster_rows = FALSE,
-         main = "Top 20 Most Highly Expressed Genes")
-
-print(p)
-ggsave(file.path(save_dir, "plots", "top_genes_heatmap.png"), plot = p)
 
 # sample-to-sample distance heatmap
 sampleDists <- dist(t(assay(vsd)))
@@ -256,9 +283,8 @@ for (pair in condition_pairs) {
   volcano_plot <- ggplot(res, aes(log2FoldChange, -log10(padj + 1e-300))) +
     geom_point(alpha = 0.6) +
     geom_point(data = sig_genes, color = "red") +
-    geom_text_repel(data = slice_max(
-                            slice_min(sig_genes, padj, n = 20),
-                          abs(log2FoldChange),n=20), 
+    geom_text_repel(data = slice_min(sig_genes, padj, n = 20) %>%
+                          slice_max(abs(log2FoldChange), n = 20), 
                    aes(label = external_gene_name), size = 3) +
     theme_bw() +
     labs(title = paste("Volcano Plot:", comparison_name),
@@ -269,8 +295,26 @@ for (pair in condition_pairs) {
   ggsave(file.path(save_dir, "plots", paste0("volcano_", comparison_name, ".png")), 
          plot = volcano_plot, width = 10, height = 8)
   
-  cat("Significant genes (padj < 0.05):", nrow(sig_genes), "\n")
-  
+  cat("Significant genes (padj < 0.05):", nrow(sig_genes), "\n") 
+
+  # data for 20 differentially expressed transcrips
+  select <- (slice_min(sig_genes, padj, n = 20) %>%
+        slice_max(abs(log2FoldChange), n = 20))$ensembl_gene_id
+
+  # prepare with gene name instead of IDs
+  heatmap_data <- as.data.frame(assay(vsd)[select, ]) %>% 
+    rownames_to_column("ensembl_gene_id") %>% 
+    left_join(g[,1:2], by = "ensembl_gene_id") %>% 
+    select(-ensembl_gene_id) %>%
+    column_to_rownames("external_gene_name")
+
+  # create heatmap of top expressed genes
+  p <- pheatmap(heatmap_data, 
+           main = "Top 20 Differentially Expressed Genes")
+
+  print(p)
+  ggsave(file.path(save_dir, "plots", paste0("top_DE_genes_",comparison_name,"_heatmap.png")), plot = p)
+
   # gene set enrichment analysis (GSEA)
   # create ranked gene list for GSEA (sorted by log2FoldChange)
   gene_list <- res$log2FoldChange
@@ -295,11 +339,17 @@ for (pair in condition_pairs) {
     cat("Analyzing", collection_name, "gene sets...\n")
     
     # run fgsea
-    fgsea_res <- suppressMessages(fgsea::fgsea(pathways = msig_sets[[collection_name]], 
-                              stats = gene_list,
-                              minSize = 15,
-                              maxSize = 500,
-                              nproc = 1)) %>% 
+    fgsea_res <- suppressMessages(suppressWarnings({
+      capture.output(
+        fgsea_result <- fgsea::fgsea(pathways = msig_sets[[collection_name]],
+                                    stats = gene_list,
+                                    minSize = 15,
+                                    maxSize = 500,
+                                    nproc = 1),
+        type = "message"
+      )
+      fgsea_result
+    })) %>%
       as.data.frame() %>%
       arrange(padj) %>%
       filter(padj < 0.05)
@@ -309,6 +359,15 @@ for (pair in condition_pairs) {
       addWorksheet(wb, collection_name)
       writeData(wb, collection_name, fgsea_res)
       cat("Found", nrow(fgsea_res), "significant pathways in", collection_name, "\n")
+
+      # Print top 5 significant pathways
+      top_pathways <- head(filter(fgsea_res,padj<0.05), 5)
+      cat("Top", min(5, nrow(fgsea_res)), "pathways:\n")
+      for (i in 1:nrow(top_pathways)) {
+        cat(sprintf("  %d. %s (padj=%.3e, NES=%.2f)\n",
+                   i, top_pathways$pathway[i], top_pathways$padj[i], top_pathways$NES[i]))
+      }
+      cat("\n")
     }
   }
   
@@ -326,8 +385,8 @@ for (pair in condition_pairs) {
 summary_results <- tibble()
 
 for (pair in condition_pairs) {
-  con1 <- pair[[1]][1]
-  con2 <- pair[[1]][2]
+  con1 <- pair[1]
+  con2 <- pair[2]
   comparison_name <- paste0(con1, "_vs_", con2)
   
   # read back the results file to get summary stats
