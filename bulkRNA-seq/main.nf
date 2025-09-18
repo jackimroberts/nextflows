@@ -145,8 +145,8 @@ process fastqc2 {
 		echo "====== PROCESS_SUMMARY"
 		
 		#QC
-		fastqc -T ${task.cpus} -f fastq ${meta.id}_${meta.run}.extracted.R1.fastq.gz
-		fastqc -T ${task.cpus} -f fastq ${meta.id}_${meta.run}.extracted.R2.fastq.gz
+		fastqc -T ${task.cpus} -f fastq ${meta.id}${meta.run}.extracted.R1.fastq.gz
+		fastqc -T ${task.cpus} -f fastq ${meta.id}${meta.run}.extracted.R2.fastq.gz
 		"""
 }
 
@@ -166,7 +166,7 @@ process extract_umi {
 	input:
 		tuple val(meta), path(fastqs)
 	output:
-		tuple val(meta), path("${meta.id}_${meta.run}.extracted.*.fastq.gz")
+		tuple val(meta), path("${meta.id}${meta.run}.extracted.*.fastq.gz")
 	script:
 		def r1 = fastqs.find { it.name.matches('.*[-_]R1[.-_].*') }
 		def r2 = fastqs.find { it.name.matches('.*[-_]R2[.-_].*') }
@@ -190,7 +190,7 @@ process extract_umi {
 		# UMI is the first 8 bases of read 2, followed by 6 linker bases to trim off
 		# pattern = 'NNNNNNNNCCCCCC'
 
-		echo "=== extracting barcode from ${meta.id}_${meta.run}"
+		echo "=== extracting barcode from ${meta.id}${meta.run}"
 				
 		umi_tools extract \\
 			-I ${r2} \\
@@ -198,8 +198,8 @@ process extract_umi {
 			--bc-pattern=${params.extract_umi.pattern} \\
 			--extract-method=${params.extract_umi.extractMethod} \\
 			${params.extract_umi.args} \\
-			-S ${meta.id}_${meta.run}.extracted.R2.fastq.gz \\
-			--read2-out=${meta.id}_${meta.run}.extracted.R1.fastq.gz \\
+			-S ${meta.id}${meta.run}.extracted.R2.fastq.gz \\
+			--read2-out=${meta.id}${meta.run}.extracted.R1.fastq.gz \\
 			--log=extract.log
 
 		# Output only the last line of extract log
@@ -290,7 +290,7 @@ process star_align {
 	input:
 		tuple val(meta), path(fastqs)
 	output:
-		tuple val(meta), path("${meta.id}_${meta.run}.raw.bam")
+		tuple val(meta), path("${meta.id}${meta.run}.raw.bam")
 	script:
 		def r1 = fastqs.find { it.name.contains('.1.fq') }
 		def r2 = fastqs.find { it.name.contains('.2.fq') }
@@ -322,7 +322,7 @@ process star_align {
 		echo "====== STAR_ALIGN ======"
 		echo "====== PROCESS_SUMMARY"
 
-		echo "=== aligning ${meta.id}_${meta.run}" 
+		echo "=== aligning ${meta.id}${meta.run}" 
 
 		STAR --genomeDir ${params.transcriptome_index} \\
 			--readFilesIn ${r1} ${r2} \\
@@ -340,18 +340,18 @@ process star_align {
 		# Output only the last line of STAR stdout
 		tail -1 star.log
 
-		mv Aligned.sortedByCoord.out.bam ${meta.id}_${meta.run}.raw.bam
+		mv Aligned.sortedByCoord.out.bam ${meta.id}${meta.run}.raw.bam
 
 		# rename for multiqc ID parsing
-		mv Log.final.out ${meta.id}_${meta.run}.Log.final.out
+		mv Log.final.out ${meta.id}${meta.run}.Log.final.out
 	
-		bam_count=\$(samtools view -c ${meta.id}_${meta.run}.raw.bam)
-		echo "${meta.id}_${meta.run}.raw.bam: \$bam_count reads aligned"
+		bam_count=\$(samtools view -c ${meta.id}${meta.run}.raw.bam)
+		echo "${meta.id}${meta.run}.raw.bam: \$bam_count reads aligned"
 
 		echo "=== estimating transcriptome alignment with rsem"
 		rsem-calculate-expression --paired-end -p ${task.cpus} \\
 			--alignments --strandedness reverse --no-bam-output \\
-   			Aligned.toTranscriptome.out.bam ${params.rsem_index} ${meta.id}_${meta.run} > rsem.out 2>&1
+   			Aligned.toTranscriptome.out.bam ${params.rsem_index} ${meta.id}${meta.run} > rsem.out 2>&1
 
 		tail -5 rsem.out
 		"""

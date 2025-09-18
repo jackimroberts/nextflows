@@ -151,7 +151,7 @@ process adapter_trim {
 		echo "====== ADAPTER_TRIM ======"
 		echo "====== PROCESS_SUMMARY"
 
-		echo "=== trimming ${meta.id}_${meta.run}"
+		echo "=== trimming ${meta.id}${meta.run}"
 
 		cutadapt \\
 			-O ${params.adapters.overlap} \\
@@ -161,12 +161,12 @@ process adapter_trim {
 			-A ${params.adapters.reverse} \\
 			-j ${task.cpus} \\
 			${params.adapters.args} \\
-			-o ${meta.id}_${meta.run}.1.fq \\
-			-p ${meta.id}_${meta.run}.2.fq \\
-			$fastqs > ${meta.id}_${meta.run}_cutadapt.log
+			-o ${meta.id}${meta.run}.1.fq \\
+			-p ${meta.id}${meta.run}.2.fq \\
+			$fastqs > ${meta.id}${meta.run}_cutadapt.log
 		
 		# Extract key stats from cutadapt log
-		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' ${meta.id}_${meta.run}_cutadapt.log | head -n -1
+		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' ${meta.id}${meta.run}_cutadapt.log | head -n -1
 		
 		"""
 }

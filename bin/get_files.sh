@@ -90,8 +90,9 @@ for source in "${SOURCES[@]}"; do
       		grep -v '^#' "$sample_table" | grep -v '^[[:space:]]*$' | \
       		grep -oE 'SRR[0-9]+' | \
 		parallel -j$cpus \
-			'echo "Downloading {}..."; prefetch {} && fasterq-dump {} --split-3 --gzip --skip-technical && \
-				echo "Completed {}" || echo "FAILED: {}"'
+			'prefetch {} && fasterq-dump {} --split-3 --skip-technical && \
+				[ -f {}_1.fastq ] && mv {}_1.fastq {}_R1.fastq; \
+				[ -f {}_2.fastq ] && mv {}_2.fastq {}_R2.fastq' >> download.log 2>&1
 	
 	else
 		echo "=== couldn't identify source: $source"

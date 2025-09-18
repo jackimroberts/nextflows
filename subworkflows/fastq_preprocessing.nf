@@ -66,7 +66,7 @@ workflow FASTQ_PREPROCESSING {
             fastq_file.name.startsWith(sample_id + "_")
         }
         | map { sample_id, sample_name, condition, extra_data, fastq_file ->
-            def run_part = fastq_file.name.replaceAll("^${sample_id}_", "").replaceAll("[-_.][LR][12][.-_].*", "")
+            def run_part = fastq_file.name.replaceAll("^${sample_id}[-_.]", "_").replaceAll("[-_.][LR][12][-_.]*", "")
             def meta = [id: sample_id, name: sample_name, condition: condition, run: run_part, extra: extra_data]
             [[meta.id, meta.run], meta, fastq_file]
         }
