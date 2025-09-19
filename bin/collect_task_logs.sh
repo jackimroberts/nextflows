@@ -26,12 +26,12 @@ work_pattern="$LAUNCH_DIR"
     for out_file in "$work_pattern"/*/*/.command.out; do
         [[ ! -s "$out_file" ]] && continue
         done_time=$(stat -c %Y "$out_file")
-        # Extract process name from the .command.out file content
-        process_name=$(grep -m1 "====== " "$out_file" 2>/dev/null | sed 's/.*====== \([^=]*\) ======.*/\1/' | tr -d ' ')
+        # Extract process name from the second ====== line (skip PROCESS_SUMMARY)
+        process_name=$(grep "====== " "$out_file" 2>/dev/null | sed -n '2p' | sed 's/.*====== \([^=]*\) ======.*/\1/' | tr -d ' ')
         [[ -z "$process_name" ]] && process_name="UNKNOWN"
         echo "$done_time|$process_name|$out_file"
     done
-} | sort -t'|' -k1,1n -k2,2 | \
+} | sort -t'|' -k1,1n | \
 while IFS='|' read -r done_time process_name out_file; do
     timestamp=$(date -d "@$done_time" "+%Y-%m-%d %H:%M:%S")
     nextflow_id=$(echo "$out_file" | sed 's|.*/work/||' | cut -c1-9)
