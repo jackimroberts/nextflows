@@ -129,16 +129,22 @@ process adapter_trim {
 	output:
 		tuple val(meta), path('*fq')
 	script:
+		def r1 = fastqs.find { it.name.matches('.*[-_]R1[.-_].*') }
+		def r2 = fastqs.find { it.name.matches('.*[-_]R2[.-_].*') }
 		"""
           	#!/bin/bash
 
-		# load cutadapt module
+		# load modules
 		module load cutadapt
+		module load fastqc
+		fastq_screen=/uufs/chpc.utah.edu/common/home/hcibcore/atlatl/app/fastq_screen/v0.14.0/fastq_screen
 
 		echo "====== PROCESS_SUMMARY"
 		echo "====== ADAPTER_TRIM ======"
 		echo "Strategy: Remove adapters and low quality bases from reads"
 		echo "cutadapt \$(cutadapt --version)"
+		echo " \$(fastqc --version)"
+		echo " fastq_screen v0.14.0"
 		echo "Parameters:"
 		echo "  forward adapter: ${params.adapters.forward}"
 		echo "  reverse adapter: ${params.adapters.reverse}"
@@ -168,6 +174,20 @@ process adapter_trim {
 		# Extract key stats from cutadapt log
 		sed -n '/Total read pairs processed/,/=== First read: Adapter 1 ===/p' ${meta.id}${meta.run}_cutadapt.log | head -n -1
 		
+		#QC before and after trimming
+		fastqc -T ${task.cpus} -f fastq ${r1} \\
+			>> ${meta.id}${meta.run}_fastqc.log 2>&1
+		fastqc -T ${task.cpus} -f fastq ${r2} \\
+			>> ${meta.id}${meta.run}_fastqc.log 2>&1
+		fastqc -T ${task.cpus} -f fastq ${meta.id}${meta.run}.1.fq \\
+			>> ${meta.id}${meta.run}_fastqc.log 2>&1
+		fastqc -T ${task.cpus} -f fastq ${meta.id}${meta.run}.2.fq \\
+			>> ${meta.id}${meta.run}_fastqc.log 2>&1	
+
+		# %rRNA and species using fastq screen
+		\$fastq_screen --conf ${projectDir}/../bin/fastqscreen.conf \\
+ 			--subset 1000000 ${meta.id}${meta.run}.1.fq \\
+			> ${meta.id}${meta.run}_fastqscreen.log 2>&1
 		"""
 }
 
@@ -294,7 +314,7 @@ process collect_qc {
 		# Collect STAR alignment logs
 		find ${launchDir}/work/*/*/*Log.final.out -exec rsync -u {} qc_metrics/alignment/ \\; 2>/dev/null || true
 		# Collect Bowtie2 logs (alternative aligners)
-		find ${launchDir}/work/*/*/*bowtie.log -exec rsync -u {} qc_metrics/alignment/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/*_bowtie.log -exec rsync -u {} qc_metrics/alignment/ \\; 2>/dev/null || true
 
 		# Collect RNA metrics files
 		find ${launchDir}/work/*/*/*rna_metrics -exec rsync -u {} qc_metrics/rna_metrics/ \\; 2>/dev/null || true
@@ -307,8 +327,9 @@ process collect_qc {
 		find ${launchDir}/work/*/*/*macs.log -exec rsync -u {} qc_metrics/peak_calling/ \\; 2>/dev/null || true
 
 		# Collect RSEM results files (for RNA-seq transcriptome quantification)
-		find ${launchDir}/work/*/*/*genes.results -exec rsync -u {} qc_metrics/rsem/ \\; 2>/dev/null || true
-		find ${launchDir}/work/*/*/*isoforms.results -exec rsync -u {} qc_metrics/rsem/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/**.genes.results -exec rsync -u {} qc_metrics/rsem/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/**.isoforms.results -exec rsync -u {} qc_metrics/rsem/ \\; 2>/dev/null || true
+		find ${launchDir}/work/*/*/rsem.out -exec rsync -u {} qc_metrics/rsem/ \\; 2>/dev/null || true
 
 		# Collect samtools stats/flagstat files
 		find ${launchDir}/work/*/*/*stats -exec rsync -u {} qc_metrics/samtools/ \\; 2>/dev/null || true
@@ -353,8 +374,8 @@ process multiqc {
 		echo "====== PROCESS_SUMMARY"
 		
 		echo "=== Generating MultiQC report from ${qc_metrics_dir}"
-		
-		multiqc ${qc_metrics_dir} --filename multiqc_report.html
+
+		multiqc ${qc_metrics_dir} --config ${projectDir}/bin/multiqc_config.yaml
 		"""
 }
 

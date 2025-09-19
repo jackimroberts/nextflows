@@ -132,12 +132,12 @@ process bowtie_align {
 		echo "=== aligning $r1/.2.fq" 
 		bowtie2 --local --very-sensitive --no-mixed --no-discordant -p ${task.cpus} \\
 			-x ${params.genome_index} -1 ${r1} -2 ${r2} \\
-			2> bowtie.log | \\
+			2> ${meta.id}${meta.run}_bowtie.log | \\
 			samtools view -bS -o ${meta.id}${meta.run}.raw.bam
-		
+
 		# Extract key stats from bowtie stderr (last 6 lines)
 		echo "=== Alignment Results"
-		tail -6 bowtie.log
+		tail -6 ${meta.id}${meta.run}_bowtie.log
 		
 		echo "=== Output Files"
 		bam_count=\$(samtools view -c ${meta.id}${meta.run}.raw.bam)

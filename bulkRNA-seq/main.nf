@@ -56,7 +56,6 @@ workflow {
 	// Trim and align individual sequencing runs
 		| fastqc1
 		| extract_umi
-		| fastqc2
 		| adapter_trim 
 		| star_align
 	
@@ -118,38 +117,12 @@ process fastqc1 {
 		echo "====== PROCESS_SUMMARY"
 		
 		#QC
-		fastqc -T ${task.cpus} -f fastq ${r1}
-		fastqc -T ${task.cpus} -f fastq ${r2}
+		fastqc -T ${task.cpus} -f fastq ${r1} \\
+			>> ${meta.id}${meta.run}_fastqc1.log 2>&1
+		fastqc -T ${task.cpus} -f fastq ${r2} \\
+			>> ${meta.id}${meta.run}_fastqc1.log 2>&1
 		"""
 }
-
-/*
- * fastqc
- */
-process fastqc2 {
-	input:
-		tuple val(meta), path(fastqs)
-	output:
-		tuple val(meta), path(fastqs)
-	script:
-		"""
-          	#!/bin/bash
-
-		module load fastqc
-
-		echo "====== PROCESS_SUMMARY"
-		echo "====== FASTQC2 ======"
-		echo "Strategy: QC fastq files after extract_umi"
-		echo " \$(fastqc --version)"
-		echo "====== FASTQC2 ======"
-		echo "====== PROCESS_SUMMARY"
-		
-		#QC
-		fastqc -T ${task.cpus} -f fastq ${meta.id}${meta.run}.extracted.R1.fastq.gz
-		fastqc -T ${task.cpus} -f fastq ${meta.id}${meta.run}.extracted.R2.fastq.gz
-		"""
-}
-
 
 /*
  * extract umi

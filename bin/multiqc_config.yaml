@@ -1,0 +1,48 @@
+##################################################################
+# MultiQC Configuration File
+# Controls module order and appearance for pipeline QC reports
+##################################################################
+
+# Report title and subtitle
+title: "Pipeline QC Report"
+subtitle: "Quality control metrics organized by pipeline workflow"
+
+# Module execution order (pipeline workflow order)
+module_order:
+    - cutadapt
+    - fastqc
+    - fastq_screen
+    - star
+    - bowtie2
+    - samtools
+    - featurecounts
+    - rsem
+    - picard
+    - macs2
+
+# Section customization
+section_comments:
+    fastqc_raw: "Quality metrics for raw sequencing reads before any processing"
+    fastq_screen: "Species composition and contamination detection"
+    cutadapt: "Adapter removal and quality trimming performance"
+    fastqc_trimmed: "Quality assessment after adapter trimming"
+    star: "RNA-seq read alignment to reference genome"
+    bowtie2: "ATAC-seq read alignment to reference genome"
+    samtools: "Alignment filtering and duplicate removal statistics"
+    rsem: "RNA quantification at transcript and gene level"
+    featurecounts: "Read counting over genomic features"
+    macs2: "Chromatin accessibility peak identification"
+
+# Custom data display
+custom_data:
+    pipeline_summary:
+        file_format: 'tsv'
+        section_name: 'Pipeline Summary'
+        description: 'Overview of pipeline processing steps and sample metrics'
+        plot_type: 'table'
+
+# Report customization
+report_header_info: []
+
+# Show sample names instead of file names where possible
+use_filename_as_sample_name: false
